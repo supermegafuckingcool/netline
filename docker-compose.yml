@@ -1,0 +1,34 @@
+services:
+
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: netline
+      MYSQL_USER: netline
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-netlinepassword}
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "netline", "--password=${MYSQL_PASSWORD:-netlinepassword}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      # Root user so Prisma can create the shadow database during migrations
+      DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD:-rootpassword}@db:3306/netline
+      PORT: 3000
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:

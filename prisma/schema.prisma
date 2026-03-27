@@ -1,0 +1,56 @@
+// Prisma schema for Netline
+// Run `npx prisma migrate dev --name init` to create the database
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Node {
+  id          String   @id                    // e.g. "A-fw01"
+  hostname    String
+  system      String
+  type        String                          // "fw" | "client" | "server"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  ips         NodeIp[]
+  linksFrom   Link[]   @relation("LinkSource")
+  linksTo     Link[]   @relation("LinkTarget")
+  note        Note?
+}
+
+model NodeIp {
+  id       Int    @id @default(autoincrement())
+  nodeId   String
+  address  String
+  subnet   String @default("")
+
+  node     Node   @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId])
+}
+
+model Link {
+  id       Int    @id @default(autoincrement())
+  source   String
+  target   String
+  label    String @default("")
+
+  sourceNode Node  @relation("LinkSource", fields: [source], references: [id], onDelete: Cascade)
+  targetNode Node  @relation("LinkTarget", fields: [target], references: [id], onDelete: Cascade)
+
+  @@unique([source, target])   // prevents duplicate links
+}
+
+model Note {
+  nodeId    String   @id
+  content   String   @db.Text
+  updatedAt DateTime @updatedAt
+
+  node      Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+}

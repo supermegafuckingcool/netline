@@ -1,0 +1,18 @@
+{
+  "name": "netline",
+  "version": "1.0.0",
+  "description": "Network graph documentation tool",
+  "main": "server.js",
+  "scripts": {
+    "start":     "node server.js",
+    "dev":       "node --watch server.js",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy":  "prisma migrate deploy",
+    "db:studio":  "prisma studio",
+    "import":    "node scripts/import.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.0.0",
+    "prisma":         "^5.0.0"
+  }
+}
