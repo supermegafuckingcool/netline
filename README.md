@@ -21,7 +21,7 @@ To run on a different port: edit `PORT` in your `.env` file.
 
 ## Importing an existing graph.json
 
-If you have a `graph.json` from the previous file-based version:
+If you have a existing `graph.json`:
 
 ```bash
 # While the containers are running:
