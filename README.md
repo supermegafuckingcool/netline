@@ -64,6 +64,8 @@ docker compose exec app npm run db:studio
 
 # Run a migration after schema changes
 docker compose exec app npx prisma migrate dev --name <migration-name>
+
+sudo docker compose exec db mysql -u root -prootpassword netline
 ```
 
 ---
