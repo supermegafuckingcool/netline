@@ -68,24 +68,6 @@ docker compose exec app npx prisma migrate dev --name <migration-name>
 
 ---
 
-## Project structure
-
-```
-├── server.js          — HTTP server + all API endpoints (Prisma-backed)
-├── graph.js           — D3 graph rendering (frontend, unchanged)
-├── ui.js              — Sidebar UI (frontend, unchanged)
-├── styles.css         — Styles (frontend, unchanged)
-├── index.html         — Entry point
-├── prisma/
-│   └── schema.prisma  — Database schema (Node, NodeIp, Link, Note)
-├── scripts/
-│   └── import.js      — CLI tool for importing graph.json files
-├── Dockerfile
-├── docker-compose.yml
-└── .env.example
-```
-
----
 
 ## API endpoints
 
@@ -100,8 +82,3 @@ docker compose exec app npx prisma migrate dev --name <migration-name>
 | GET    | /notes        | Get all notes as `{nodeId: content}`     |
 | POST   | /save-note    | Save or delete a note for a node         |
 
----
-
-## Coming later
-
-- GitLab OAuth authentication (via `passport-gitlab2`)
