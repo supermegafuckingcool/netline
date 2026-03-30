@@ -25,34 +25,6 @@ if ! docker compose version &> /dev/null; then
 fi
 echo -e "${GREEN}✓ Docker found${NC}"
 
-# ── Check if already running ──────────────────────────────────────────────────
-if docker compose ps 2>/dev/null | grep -q "app.*Up"; then
-    PORT_VAL=$(grep -E '^PORT=' .env 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')
-    PORT_VAL=${PORT_VAL:-3000}
-    echo -e "${GREEN}✓ Netline is already running at http://localhost:${PORT_VAL}${NC}"
-    echo ""
-    echo "  Commands:"
-    echo "    Stop:              docker compose down"
-    echo "    Stop + wipe db:    docker compose down -v"
-    echo "    Logs:              docker compose logs -f app"
-    exit 0
-fi
-
-# ── Images ────────────────────────────────────────────────────────────────────
-if [ -f "netline-app.tar.gz" ] && [ -f "netline-mysql.tar.gz" ] && ! docker image inspect netline:latest &>/dev/null; then
-    echo -e "${YELLOW}Loading images from tar files...${NC}"
-    docker load < netline-mysql.tar.gz
-    docker load < netline-app.tar.gz
-    echo -e "${GREEN}✓ Images loaded${NC}"
-    BUILD_FLAG=""
-elif docker image inspect netline:latest &>/dev/null && docker image inspect mysql:8.0 &>/dev/null; then
-    echo -e "${GREEN}✓ Images ready${NC}"
-    BUILD_FLAG=""
-else
-    echo -e "${YELLOW}No pre-built images found — building from source (internet required)...${NC}"
-    BUILD_FLAG="--build"
-fi
-
 # ── Environment file ──────────────────────────────────────────────────────────
 if [ ! -f .env ]; then
     cp .env.example .env
@@ -61,16 +33,35 @@ if [ ! -f .env ]; then
     read -p "Press Enter to continue with default passwords, or Ctrl+C to edit .env first: "
 fi
 
-# ── Start containers ──────────────────────────────────────────────────────────
+MYSQL_PASSWORD_VAL=$(grep -E '^MYSQL_PASSWORD=' .env 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')
+MYSQL_PASSWORD_VAL=${MYSQL_PASSWORD_VAL:-netlinepassword}
+PORT_VAL=$(grep -E '^PORT=' .env 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')
+PORT_VAL=${PORT_VAL:-3000}
+
+# ── Reset DB prompt ───────────────────────────────────────────────────────────
+RESET_DB=false
 echo ""
-echo -e "${YELLOW}Starting containers...${NC}"
-docker compose up $BUILD_FLAG -d
+read -p "Reset database? All data will be lost. (y/N): " RESET_ANSWER
+if [[ "$RESET_ANSWER" =~ ^[Yy]$ ]]; then
+    RESET_DB=true
+    echo -e "${YELLOW}Database will be reset.${NC}"
+else
+    echo -e "${GREEN}Keeping existing data.${NC}"
+fi
+
+# ── Wipe DB if requested ──────────────────────────────────────────────────────
+if [ "$RESET_DB" = true ]; then
+    echo -e "${YELLOW}Stopping and wiping database volume...${NC}"
+    docker compose down -v 2>/dev/null || true
+fi
+
+# ── Build and start ───────────────────────────────────────────────────────────
+echo ""
+echo -e "${YELLOW}Building and starting containers...${NC}"
+docker compose up --build -d
 
 # ── Wait for database ─────────────────────────────────────────────────────────
 echo -e "${YELLOW}Waiting for database...${NC}"
-MYSQL_PASSWORD_VAL=$(grep -E '^MYSQL_PASSWORD=' .env 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')
-MYSQL_PASSWORD_VAL=${MYSQL_PASSWORD_VAL:-netlinepassword}
-
 until docker compose exec db mysqladmin ping -h localhost -u netline \
     --password="$MYSQL_PASSWORD_VAL" --silent 2>/dev/null; do
     printf '.'
@@ -79,36 +70,34 @@ done
 echo ""
 echo -e "${GREEN}✓ Database ready${NC}"
 
-# ── Run migrations ────────────────────────────────────────────────────────────
+# ── Migrations ────────────────────────────────────────────────────────────────
 echo -e "${YELLOW}Running migrations...${NC}"
-if [ -d "prisma/migrations" ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then
-    docker compose exec app npx prisma migrate deploy
-    echo -e "${GREEN}✓ Migrations applied${NC}"
+if [ ! -d "prisma/migrations" ] || [ -z "$(ls -A prisma/migrations 2>/dev/null)" ]; then
+    # No migration files yet — generate them directly from the schema using db push,
+    # then create a baseline migration so deploy works from now on
+    docker compose exec -T app npx prisma db push --skip-generate
+    echo -e "${GREEN}  Schema pushed — creating baseline migration...${NC}"
+    docker compose exec -T app npx prisma migrate resolve --applied 0_init 2>/dev/null || true
 else
-    echo -e "${YELLOW}First run — creating initial migration...${NC}"
-    docker compose exec app npx prisma migrate dev --name init
-    echo -e "${GREEN}✓ Database initialised${NC}"
+    docker compose exec -T app npx prisma migrate deploy
 fi
+echo -e "${GREEN}✓ Database ready${NC}"
 
-# ── Restart app ───────────────────────────────────────────────────────────────
+# ── Restart app to pick up migrations ────────────────────────────────────────
 docker compose restart app
 
-# ── Save images for offline use after first build ────────────────────────────
-if [ ! -f "netline-app.tar.gz" ] && [ -n "$BUILD_FLAG" ]; then
+# ── Save images for offline use ───────────────────────────────────────────────
+if [ ! -f "netline-app.tar.gz" ]; then
     echo ""
-    echo -e "${YELLOW}Saving images for future offline use...${NC}"
+    echo -e "${YELLOW}Saving images for offline deployment...${NC}"
     APP_IMAGE=$(docker compose images -q app)
-    docker tag "$APP_IMAGE" netline:latest
+    docker tag "$APP_IMAGE" netline:latest 2>/dev/null || true
     docker save netline:latest | gzip > netline-app.tar.gz
     docker save mysql:8.0      | gzip > netline-mysql.tar.gz
     echo -e "${GREEN}✓ Saved netline-app.tar.gz and netline-mysql.tar.gz${NC}"
-    echo "  Copy these alongside the repo to deploy on machines without internet."
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
-PORT_VAL=$(grep -E '^PORT=' .env 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')
-PORT_VAL=${PORT_VAL:-3000}
-
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  Netline is running!${NC}"

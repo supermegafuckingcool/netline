@@ -138,6 +138,7 @@ const tabs = [
             <h3>JSON Editor</h3>
             <div style="display:flex;gap:8px;margin-bottom:8px;">
                 <button id="json-clean-btn" class="form-btn-secondary" style="font-size:12px;padding:5px 12px;">Clean JSON</button>
+                <button id="json-export-btn" class="form-btn-secondary" style="font-size:12px;padding:5px 12px;">Export JSON</button>
             </div>
             <div id="json-error" style="font-size:12px;color:#c0392b;min-height:16px;margin-bottom:4px;"></div>
             <textarea id="json-editor" spellcheck="false"></textarea>
@@ -305,6 +306,7 @@ function wireJsonEditor() {
     const saveBtn   = document.getElementById("json-save-btn");
     const reloadBtn = document.getElementById("json-reload-btn");
     const cleanBtn  = document.getElementById("json-clean-btn");
+    const exportBtn = document.getElementById("json-export-btn");
     const errorEl   = document.getElementById("json-error");
     if (!editor) return;
 
@@ -347,6 +349,38 @@ function wireJsonEditor() {
         errorEl.style.color = "#27ae60";
         errorEl.textContent = "Cleaned — click Save to persist.";
         setTimeout(() => { errorEl.textContent = ""; errorEl.style.color = "#c0392b"; }, 3000);
+    });
+
+    exportBtn.addEventListener("click", () => {
+        let parsed;
+        try { parsed = JSON.parse(editor.value); }
+        catch (e) { errorEl.textContent = "Invalid JSON: " + e.message; return; }
+
+        // Clean before export — strip simulation state and deduplicate links
+        parsed.nodes = parsed.nodes.map(n => {
+            const clean = { ...n };
+            SIM_KEYS.forEach(k => delete clean[k]);
+            return clean;
+        });
+        const seen = new Set();
+        parsed.links = parsed.links.filter(l => {
+            const s = typeof l.source === "object" ? l.source.id : l.source;
+            const t = typeof l.target === "object" ? l.target.id : l.target;
+            const key = s + "||" + t;
+            if (seen.has(key)) return false;
+            seen.add(key); return true;
+        });
+
+        const text = JSON.stringify(parsed, null, 4);
+        editor.value = text;
+
+        const blob = new Blob([text], { type: "application/json" });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement("a");
+        a.href     = url;
+        a.download = "netline-graph.json";
+        a.click();
+        URL.revokeObjectURL(url);
     });
 
     saveBtn.addEventListener("click", () => {
