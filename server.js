@@ -148,28 +148,60 @@ http.createServer(async (req, res) => {
 
             const ips = Array.isArray(node.ips) ? node.ips : [];
 
-            await prisma.$transaction(async tx => {
-                // Update node fields
-                await tx.node.update({
-                    where: { id: originalId },
-                    data:  { hostname: node.hostname, system: node.system, type: node.type },
-                });
+            // ID is derived from system + hostname — update it if either changed
+            const newId = `${node.system}-${node.hostname}`;
+            node.id = newId;
 
-                // Replace IPs
-                await tx.nodeIp.deleteMany({ where: { nodeId: originalId } });
-                for (const ip of ips) {
-                    await tx.nodeIp.create({ data: { nodeId: originalId, address: ip.address, subnet: ip.subnet || "" } });
+            await prisma.$transaction(async tx => {
+                if (newId !== originalId) {
+                    // Create new node record with the new ID
+                    await tx.node.create({
+                        data: {
+                            id:       newId,
+                            hostname: node.hostname,
+                            system:   node.system,
+                            type:     node.type,
+                        }
+                    });
+                    // Move IPs to new ID
+                    await tx.nodeIp.updateMany({
+                        where: { nodeId: originalId },
+                        data:  { nodeId: newId },
+                    });
+                    // Move inbound links to new ID
+                    await tx.link.updateMany({
+                        where: { target: originalId },
+                        data:  { target: newId },
+                    });
+                    // Move note to new ID
+                    await tx.note.updateMany({
+                        where: { nodeId: originalId },
+                        data:  { nodeId: newId },
+                    });
+                    // Delete old node (outgoing links cascade-deleted)
+                    await tx.node.delete({ where: { id: originalId } });
+                } else {
+                    await tx.node.update({
+                        where: { id: originalId },
+                        data:  { hostname: node.hostname, system: node.system, type: node.type },
+                    });
                 }
 
-                // Rebuild outgoing links only
-                await tx.link.deleteMany({ where: { source: originalId } });
+                // Replace IPs
+                await tx.nodeIp.deleteMany({ where: { nodeId: newId } });
+                for (const ip of ips) {
+                    await tx.nodeIp.create({ data: { nodeId: newId, address: ip.address, subnet: ip.subnet || "" } });
+                }
+
+                // Rebuild outgoing links
+                await tx.link.deleteMany({ where: { source: newId } });
                 for (const target of connections) {
                     const targetExists = await tx.node.findUnique({ where: { id: target } });
                     if (targetExists) {
                         await tx.link.upsert({
-                            where:  { source_target: { source: originalId, target } },
+                            where:  { source_target: { source: newId, target } },
                             update: {},
-                            create: { source: originalId, target, label: "" },
+                            create: { source: newId, target, label: "" },
                         });
                     }
                 }

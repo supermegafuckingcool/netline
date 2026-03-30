@@ -402,7 +402,7 @@ body {
 }
 
 .ip-row .ip-subnet {
-    width: 90px;
+    width: 70px;
     padding: 7px 6px;
     border: 1.5px solid #ccc;
     border-radius: 6px;
@@ -410,6 +410,11 @@ body {
     font-family: Arial, sans-serif;
     background: white;
     outline: none;
+    transition: border-color 0.15s ease;
+}
+
+.ip-row .ip-subnet:focus {
+    border-color: #de8691;
 }
 
 .ip-row .ip-remove-btn {

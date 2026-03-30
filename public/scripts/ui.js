@@ -34,17 +34,20 @@ function addIpRow(container, address = "", subnet = "") {
     row.className = "ip-row";
     row.innerHTML = `
         <input type="text" class="ip-address" placeholder="e.g. 10.0.1.1" value="${address}" />
-        <select class="ip-subnet">
-            <option value="">No mask</option>
-            ${["/8","/16","/24","/25","/26","/27","/28","/29","/30","/32"]
-                .map(m => `<option value="${m}" ${subnet===m?"selected":""}>${m}</option>`).join("")}
-        </select>
+        <input type="text" class="ip-subnet" placeholder="/24" value="${subnet}" maxlength="4" />
         <button type="button" class="ip-remove-btn" title="Remove" style="visibility:${address ? 'visible' : 'hidden'};">
             <img src="images/icons/trash.svg" style="width:14px;height:14px;pointer-events:none;" />
         </button>
     `;
     const removeBtn    = row.querySelector(".ip-remove-btn");
     const addressInput = row.querySelector(".ip-address");
+    const subnetInput  = row.querySelector(".ip-subnet");
+
+    // Auto-prepend "/" when user starts typing a digit
+    subnetInput.addEventListener("input", function() {
+        let v = this.value;
+        if (v.length > 0 && v[0] !== "/") this.value = "/" + v.replace(/\//g, "");
+    });
 
     removeBtn.addEventListener("click", () => {
         row.remove();
@@ -64,7 +67,7 @@ function collectIps(container) {
     const result = [];
     container.querySelectorAll(".ip-row").forEach(row => {
         const address = row.querySelector(".ip-address").value.trim();
-        const subnet  = row.querySelector(".ip-subnet").value;
+        const subnet  = row.querySelector(".ip-subnet").value.trim();
         if (address) result.push({ address, subnet });
     });
     return result;
@@ -513,14 +516,29 @@ function renderNodeList() {
             .then(r => r.json())
             .then(res => {
                 if (res.error) { errorEl.textContent = res.error; return; }
-                const data = window.currentGraphData;
-                const idx  = data.nodes.findIndex(n => n.id === node.id);
-                if (idx !== -1) data.nodes[idx] = updated;
-                data.links = data.links.filter(l => {
-                    const s = typeof l.source === "object" ? l.source.id : l.source;
-                    return s !== node.id;
-                });
-                if (updated.connections) updated.connections.forEach(t => data.links.push({ source: updated.id, target: t }));
+                const data   = window.currentGraphData;
+                const newId  = res.node.id;
+                const oldId  = node.id;
+
+                // Update node in place, with potentially new ID
+                const idx = data.nodes.findIndex(n => n.id === oldId);
+                if (idx !== -1) data.nodes[idx] = res.node;
+
+                // Update all links that referenced the old ID
+                data.links = data.links
+                    .filter(l => {
+                        const s = typeof l.source === "object" ? l.source.id : l.source;
+                        return s !== oldId;
+                    })
+                    .map(l => {
+                        const t = typeof l.target === "object" ? l.target.id : l.target;
+                        return t === oldId ? { ...l, target: newId } : l;
+                    });
+
+                if (res.node.connections) {
+                    res.node.connections.forEach(t => data.links.push({ source: newId, target: t }));
+                }
+
                 d3.select("#canvas svg").remove();
                 d3.select("#canvas #node-tooltip").remove();
                 drawGraph(data);

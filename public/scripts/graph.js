@@ -1,6 +1,6 @@
 // ============ Graph ============
 // Load graph — fall back to empty graph if file doesn't exist
-fetch("graph.json?nocache=" + Date.now())
+fetch("/graph")
     .then(r => r.ok ? r.json() : { nodes: [], links: [] })
     .catch(() => ({ nodes: [], links: [] }))
     .then(function(data) {
@@ -117,9 +117,9 @@ function drawGraph(data) {
         .force("charge", d3.forceManyBody())
         .force("center", d3.forceCenter(width / 2, height / 2))
         .force("collision", d3.forceCollide(d => {
-            if (d.type === "fw")     return 34 + 4;
-            if (d.type === "client") return 28 + 4;
-            return 30 + 4;
+            if (d.type === "fw")     return 46 + 4;
+            if (d.type === "client") return 38 + 4;
+            return 42 + 4;
         }));
 
     // ============ Visual ============
@@ -153,9 +153,9 @@ function drawGraph(data) {
 
     node.append("circle")
         .attr("r", d => {
-            if (d.type === "fw")     return 34;
-            if (d.type === "client") return 28;
-            return 30;
+            if (d.type === "fw")     return 46;
+            if (d.type === "client") return 38;
+            return 42;
         })
         .attr("fill", d => {
             if (d.type === "fw")     return "#de8691";
@@ -174,9 +174,9 @@ function drawGraph(data) {
 
     // ============ Hover ============
     function nodeRadius(d) {
-        if (d.type === "fw")     return 34;
-        if (d.type === "client") return 28;
-        return 30;
+        if (d.type === "fw")     return 46;
+        if (d.type === "client") return 38;
+        return 42;
     }
 
     function positionTooltip(d) {
