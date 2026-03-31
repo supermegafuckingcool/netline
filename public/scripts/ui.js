@@ -313,7 +313,7 @@ function wireJsonEditor() {
     const SIM_KEYS = ["index","x","y","vx","vy","fx","fy"];
 
     function loadJson() {
-        fetch("graph.json?nocache=" + Date.now())
+        fetch("/graph")
             .then(r => r.ok ? r.json() : { nodes: [], links: [] })
             .catch(() => ({ nodes: [], links: [] }))
             .then(data => { editor.value = JSON.stringify(data, null, 4); errorEl.textContent = ""; });
@@ -573,6 +573,12 @@ function renderNodeList() {
                     res.node.connections.forEach(t => data.links.push({ source: newId, target: t }));
                 }
 
+                // Migrate note key in memory if ID changed
+                if (newId !== oldId && window.nodeNotes && window.nodeNotes[oldId]) {
+                    window.nodeNotes[newId] = window.nodeNotes[oldId];
+                    delete window.nodeNotes[oldId];
+                }
+
                 d3.select("#canvas svg").remove();
                 d3.select("#canvas #node-tooltip").remove();
                 drawGraph(data);
@@ -615,6 +621,11 @@ function renderNodeList() {
 window.refreshNodeList = renderNodeList;
 
 // ============ Node Detail Panel ============
+// Escape HTML special chars to prevent XSS when injecting into innerHTML
+function escHtml(s) {
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
 window.selectNode = function(id) {
     const data  = window.currentGraphData || {};
     const node  = (data.nodes || []).find(n => n.id === id);
@@ -623,12 +634,12 @@ window.selectNode = function(id) {
     document.getElementById("node-detail-title").textContent = node.system + " · " + node.hostname;
 
     const ipList = Array.isArray(node.ips) && node.ips.length
-        ? node.ips.map(i => i.address + (i.subnet || "")).join(", ")
-        : (node.ip || "—");
+        ? node.ips.map(i => escHtml(i.address + (i.subnet || ""))).join(", ")
+        : escHtml(node.ip || "—");
     document.getElementById("node-detail-meta").innerHTML =
-        `<span style="color:#ccc">ID</span>&nbsp;&nbsp;${node.id}<br>` +
+        `<span style="color:#ccc">ID</span>&nbsp;&nbsp;${escHtml(node.id)}<br>` +
         `<span style="color:#ccc">IP</span>&nbsp;&nbsp;${ipList}<br>` +
-        `<span style="color:#ccc">Type</span>&nbsp;&nbsp;${node.type}`;
+        `<span style="color:#ccc">Type</span>&nbsp;&nbsp;${escHtml(node.type)}`;
 
     const notesEl   = document.getElementById("node-detail-notes");
     const previewEl = document.getElementById("node-detail-preview");

@@ -15,15 +15,6 @@ fetch("/graph")
     .then(function(data) {
         window.currentGraphData = data;
 
-        // Generate links from connections
-        data.nodes.forEach(node => {
-            if (node.connections && Array.isArray(node.connections)) {
-                node.connections.forEach(targetId => {
-                    data.links.push({ source: node.id, target: targetId });
-                });
-            }
-        });
-
         drawGraph(data);
 
         // Now that currentGraphData is ready, wire up sidebar panels
@@ -117,8 +108,9 @@ function drawGraph(data) {
         .force("link", d3.forceLink(data.links)
             .id(d => d.id)
             .distance(d => {
-                const sameSystem = d.source.system === d.target.system;
-                return sameSystem ? LINK_DISTANCE_SAME : LINK_DISTANCE_DIFF;
+                const src = typeof d.source === "object" ? d.source.id : d.source;
+                const tgt = typeof d.target === "object" ? d.target.id : d.target;
+                return systemMap[src] === systemMap[tgt] ? LINK_DISTANCE_SAME : LINK_DISTANCE_DIFF;
             })
         )
         .alphaDecay(0.08)
@@ -132,14 +124,19 @@ function drawGraph(data) {
         }));
 
     // ============ Visual ============
+    // Build a map for quick system lookup
+    const systemMap = {};
+    data.nodes.forEach(n => { systemMap[n.id] = n.system; });
+
     const link = zoomLayer.append("g")
         .selectAll("line")
         .data(data.links)
         .join("line")
         .attr("stroke", "#aaa")
         .attr("stroke-width", d => {
-            const sameSystem = d.source.system === d.target.system;
-            return sameSystem ? 2 : 1;
+            const src = typeof d.source === "object" ? d.source.id : d.source;
+            const tgt = typeof d.target === "object" ? d.target.id : d.target;
+            return systemMap[src] === systemMap[tgt] ? 2 : 1;
         });
 
     // Link labels
@@ -319,9 +316,15 @@ window.addNodeToGraph = function(newNode) {
     newNode.y = window.innerHeight / 2 + (Math.random() - 0.5) * 100;
     data.nodes.push(newNode);
 
+    // Add links — server already persisted them, add to in-memory data for live render
     if (newNode.connections) {
         newNode.connections.forEach(targetId => {
-            data.links.push({ source: newNode.id, target: targetId });
+            // Only add if not already present
+            const exists = data.links.some(l => {
+                const s = typeof l.source === "object" ? l.source.id : l.source;
+                return s === newNode.id && (typeof l.target === "object" ? l.target.id : l.target) === targetId;
+            });
+            if (!exists) data.links.push({ source: newNode.id, target: targetId, label: "" });
         });
     }
 
