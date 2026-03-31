@@ -1,86 +1,97 @@
 # Netline
 
-Network graph documentation tool. Self-hosted, runs anywhere Docker is available.
+Self-hosted network graph documentation tool. Runs in docker. 
 
-## Quick start
+---
+
+## Starting the app
 
 ```bash
-# 1. Clone / copy the project files
-# 2. Copy the example env file
-cp .env.example .env
-
-# 3. Start everything (builds the app, starts MySQL, runs migrations)
-docker compose up --build
+chmod +x start.sh
+sudo ./start.sh
 ```
 
 Open http://localhost:3000
 
-To run on a different port: edit `PORT` in your `.env` file.
+---
+
+## Offline deployment
+
+On a machine with internet, build and export the images:
+
+```bash
+sudo ./start.sh --export-images
+```
+
+This saves two files alongside the repo:
+- `netline-app.tar.gz`
+- `netline-mysql.tar.gz`
+
+Copy the entire project folder and both tar files to the target machine, then:
+
+```bash
+sudo ./start.sh
+```
+
+The script detects the tar files and loads them automatically — no internet needed.
 
 ---
 
-## Importing an existing graph.json
+## Importing a graph.json
 
-If you have a existing `graph.json`:
+If you have an existing `graph.json` from a previous version or another tool:
 
 ```bash
-# While the containers are running:
-docker compose exec app node scripts/import.js /path/to/graph.json
-
-# Or from outside the container, copy the file in first:
 docker compose cp ./graph.json app:/app/graph.json
 docker compose exec app node scripts/import.js /app/graph.json
 ```
 
-The import is non-destructive — it upserts nodes and links, so existing data is preserved.
-
-You can also POST to `/import` directly with a JSON body in the same `{nodes, links}` format.
+The import is non-destructive — existing nodes and links are preserved.
 
 ---
 
-## Development (without Docker)
-
-You'll need MySQL running locally. Set `DATABASE_URL` in a `.env` file:
-
-```
-DATABASE_URL=mysql://user:password@localhost:3306/netline
-```
-
-Then:
+## Browsing the database
 
 ```bash
-npm install
-npx prisma migrate dev --name init   # first time only
-npm run dev
+# Visual browser (opens at http://localhost:5555)
+docker compose exec app npx prisma studio
+
+# MySQL shell
+docker compose exec db mysql -u netline --password=netlinepassword netline
 ```
 
 ---
 
-## Database management
+## Viewing logs
 
 ```bash
-# Open Prisma Studio (visual database browser)
-docker compose exec app npm run db:studio
-
-# Run a migration after schema changes
-docker compose exec app npx prisma migrate dev --name <migration-name>
-
-sudo docker compose exec db mysql -u root -prootpassword netline
+docker compose logs -f app
+docker compose logs -f db
 ```
 
 ---
-
 
 ## API endpoints
 
-| Method | Path          | Description                              |
-|--------|---------------|------------------------------------------|
-| GET    | /graph        | Returns full graph as `{nodes, links}`   |
-| POST   | /add-node     | Add a single node                        |
-| POST   | /edit-node    | Edit a node (fields + IPs + connections) |
-| POST   | /delete-node  | Delete a node (cascades links/ips/note)  |
-| POST   | /save-graph   | Replace entire graph (from JSON editor)  |
-| POST   | /import       | Non-destructive graph import             |
-| GET    | /notes        | Get all notes as `{nodeId: content}`     |
-| POST   | /save-note    | Save or delete a note for a node         |
+| Method | Path           | Description                               |
+|--------|----------------|-------------------------------------------|
+| GET    | /graph         | Full graph as `{nodes, links}`            |
+| POST   | /add-node      | Add a node                                |
+| POST   | /edit-node     | Edit a node (updates ID if name changed)  |
+| POST   | /delete-node   | Delete a node (cascades links/IPs/note)   |
+| POST   | /save-graph    | Replace entire graph (from JSON editor)   |
+| POST   | /import        | Non-destructive graph import              |
+| GET    | /notes         | All notes as `{nodeId: content}`          |
+| POST   | /save-note     | Save or delete a note                     |
 
+---
+
+## Environment variables
+
+Defaults work out of the box. Override by editing `.env`:
+
+```
+MYSQL_ROOT_PASSWORD=rootpassword
+MYSQL_PASSWORD=netlinepassword
+PORT=3000
+```
