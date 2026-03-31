@@ -1,4 +1,13 @@
 // ============ Graph ============
+
+// ── Visual constants — tweak these to adjust the graph appearance ─────────────
+const NODE_SIZE          = 0;   // added to all node radii
+const FONT_SIZE          = 12;  // node label font size (px)
+const LINK_DISTANCE_SAME = 120; // distance between nodes in the same system
+const LINK_DISTANCE_DIFF = 300; // distance between nodes in different systems
+const LINK_STRENGTH      = -30; // node repulsion (more negative = further apart)
+const DOT_GRID_SIZE      = 30;  // background dot grid spacing (px)
+// ─────────────────────────────────────────────────────────────────────────────
 // Load graph — fall back to empty graph if file doesn't exist
 fetch("/graph")
     .then(r => r.ok ? r.json() : { nodes: [], links: [] })
@@ -81,7 +90,7 @@ function drawGraph(data) {
 
     // ============ Background grid ============
     const defs = svg.append("defs");
-    const patternSize = 30;
+    const patternSize = DOT_GRID_SIZE;
 
     const pattern = defs.append("pattern")
         .attr("id", "dotGrid")
@@ -109,17 +118,17 @@ function drawGraph(data) {
             .id(d => d.id)
             .distance(d => {
                 const sameSystem = d.source.system === d.target.system;
-                return sameSystem ? 120 : 300;
+                return sameSystem ? LINK_DISTANCE_SAME : LINK_DISTANCE_DIFF;
             })
         )
         .alphaDecay(0.08)
         .alphaMin(0.02)
-        .force("charge", d3.forceManyBody())
+        .force("charge", d3.forceManyBody().strength(LINK_STRENGTH))
         .force("center", d3.forceCenter(width / 2, height / 2))
         .force("collision", d3.forceCollide(d => {
-            if (d.type === "fw")     return 56 + 4;
-            if (d.type === "client") return 48 + 4;
-            return 52 + 4;
+            if (d.type === "fw")     return 56 + NODE_SIZE + 4;
+            if (d.type === "client") return 48 + NODE_SIZE + 4;
+            return 52 + NODE_SIZE + 4;
         }));
 
     // ============ Visual ============
@@ -153,9 +162,9 @@ function drawGraph(data) {
 
     node.append("circle")
         .attr("r", d => {
-            if (d.type === "fw")     return 56;
-            if (d.type === "client") return 48;
-            return 52;
+            if (d.type === "fw")     return 56 + NODE_SIZE;
+            if (d.type === "client") return 48 + NODE_SIZE;
+            return 52 + NODE_SIZE;
         })
         .attr("fill", d => {
             if (d.type === "fw")     return "#de8691";
@@ -170,13 +179,13 @@ function drawGraph(data) {
         .attr("text-anchor", "middle")
         .attr("dy", "0.35em")
         .style("pointer-events", "none")
-        .attr("font-size", 12);
+        .attr("font-size", FONT_SIZE);
 
     // ============ Hover ============
     function nodeRadius(d) {
-        if (d.type === "fw")     return 56;
-        if (d.type === "client") return 48;
-        return 52;
+        if (d.type === "fw")     return 56 + NODE_SIZE;
+        if (d.type === "client") return 48 + NODE_SIZE;
+        return 52 + NODE_SIZE;
     }
 
     function positionTooltip(d) {
