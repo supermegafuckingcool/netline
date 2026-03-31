@@ -7,11 +7,12 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${GREEN}"
-echo "  _   _      _   _ _            "
-echo " | \ | | ___| |_| (_)_ __   ___ "
-echo " |  \| |/ _ \ __| | | | '_ \ / _ \\"
-echo " | |\  |  __/ |_| | | | | | |  __/"
-echo " |_| \_|\___|\__|_|_|_| |_|\___|"
+echo "                                                  __"
+echo "  _   _      _   _ _                  _    __   _/  \\"
+echo " | \ | | ___| |_| (_)_ __   ___      / \\__/  \\_/ \\__/"
+echo " |  \| |/ _ \ __| | | | '_ \ / _ \\   \\_/  \\__/  __"
+echo " | |\  |  __/ |_| | | | | | |  __/           \\_/  \\"
+echo " |_| \_|\___|\__|_|_|_| |_|\___|               \\__/"
 echo -e "${NC}"
 
 # ── Check Docker ──────────────────────────────────────────────────────────────
@@ -86,8 +87,8 @@ echo -e "${GREEN}✓ Database ready${NC}"
 # ── Restart app to pick up migrations ────────────────────────────────────────
 docker compose restart app
 
-# ── Save images for offline use ───────────────────────────────────────────────
-if [ ! -f "netline-app.tar.gz" ]; then
+# ── Save images for offline use (only if --export flag given) ─────────
+if [[ " $* " == *" --export "* ]]; then
     echo ""
     echo -e "${YELLOW}Saving images for offline deployment...${NC}"
     APP_IMAGE=$(docker compose images -q app)
@@ -95,6 +96,7 @@ if [ ! -f "netline-app.tar.gz" ]; then
     docker save netline:latest | gzip > netline-app.tar.gz
     docker save mysql:8.0      | gzip > netline-mysql.tar.gz
     echo -e "${GREEN}✓ Saved netline-app.tar.gz and netline-mysql.tar.gz${NC}"
+    echo "  Copy these alongside the repo to deploy on machines without internet."
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
