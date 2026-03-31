@@ -20,7 +20,7 @@ Open http://localhost:3000
 On a machine with internet, build and export the images:
 
 ```bash
-./start.sh --export-images
+./start.sh --export
 ```
 
 This saves two files alongside the repo:
