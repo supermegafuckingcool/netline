@@ -8,7 +8,7 @@ Self-hosted network graph documentation tool. Runs in docker.
 
 ```bash
 chmod +x start.sh
-sudo ./start.sh
+./start.sh
 ```
 
 Open http://localhost:3000
@@ -20,7 +20,7 @@ Open http://localhost:3000
 On a machine with internet, build and export the images:
 
 ```bash
-sudo ./start.sh --export-images
+./start.sh --export-images
 ```
 
 This saves two files alongside the repo:
@@ -30,7 +30,7 @@ This saves two files alongside the repo:
 Copy the entire project folder and both tar files to the target machine, then:
 
 ```bash
-sudo ./start.sh
+./start.sh
 ```
 
 The script detects the tar files and loads them automatically — no internet needed.
