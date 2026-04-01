@@ -2,6 +2,14 @@
 
 Self-hosted network graph documentation tool. Runs in docker.
 
+
+Main showcase
+![Main showcase](gifs/Main_showcase.gif)
+
+
+Timeline showcase
+![Timeline showcase](gifs/Timeline_showcase.gif)
+
 ---
 
 ## Starting the app
