@@ -56,6 +56,14 @@ if [ "$RESET_DB" = true ]; then
     docker compose down -v 2>/dev/null || true
 fi
 
+# ── Load offline images if present ───────────────────────────────────────────
+if [ -f netline-app.tar.gz ] && [ -f netline-mysql.tar.gz ]; then
+    echo -e "${YELLOW}Offline images found — loading...${NC}"
+    docker load < netline-app.tar.gz
+    docker load < netline-mysql.tar.gz
+    echo -e "${GREEN}✓ Images loaded${NC}"
+fi
+
 # ── Build and start ───────────────────────────────────────────────────────────
 echo ""
 echo -e "${YELLOW}Building and starting containers...${NC}"
@@ -87,16 +95,46 @@ echo -e "${GREEN}✓ Database ready${NC}"
 # ── Restart app to pick up migrations ────────────────────────────────────────
 docker compose restart app
 
-# ── Save images for offline use (only if --export flag given) ─────────
+# ── Export bundle for offline use (only if --export-images flag given) ───────
 if [[ " $* " == *" --export "* ]]; then
     echo ""
-    echo -e "${YELLOW}Saving images for offline deployment...${NC}"
+    echo -e "${YELLOW}Building offline deployment bundle...${NC}"
+
+    BUNDLE_DIR=$(mktemp -d)
+    REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    # Save Docker images
+    echo -e "${YELLOW}  Saving Docker images...${NC}"
     APP_IMAGE=$(docker compose images -q app)
     docker tag "$APP_IMAGE" netline:latest 2>/dev/null || true
-    docker save netline:latest | gzip > netline-app.tar.gz
-    docker save mysql:8.0      | gzip > netline-mysql.tar.gz
-    echo -e "${GREEN}✓ Saved netline-app.tar.gz and netline-mysql.tar.gz${NC}"
-    echo "  Copy these alongside the repo to deploy on machines without internet."
+    docker save netline:latest | gzip > "$BUNDLE_DIR/netline-app.tar.gz"
+    docker save mysql:8.0      | gzip > "$BUNDLE_DIR/netline-mysql.tar.gz"
+
+    # Copy project files (exclude node_modules, .git, and any existing bundle)
+    echo -e "${YELLOW}  Copying project files...${NC}"
+    mkdir -p "$BUNDLE_DIR/netline"
+    tar -cf - -C "$REPO_DIR" \
+        --exclude='./node_modules' \
+        --exclude='./.git' \
+        --exclude='./netline.tar.gz' \
+        --exclude='./netline-app.tar.gz' \
+        --exclude='./netline-mysql.tar.gz' \
+        . | tar -xf - -C "$BUNDLE_DIR/netline"
+
+    # Move images inside the project folder so start.sh finds them automatically
+    mv "$BUNDLE_DIR/netline-app.tar.gz"   "$BUNDLE_DIR/netline/"
+    mv "$BUNDLE_DIR/netline-mysql.tar.gz" "$BUNDLE_DIR/netline/"
+
+    # Pack everything into a single archive
+    tar -czf "$REPO_DIR/netline.tar.gz" -C "$BUNDLE_DIR" netline
+    rm -rf "$BUNDLE_DIR"
+
+    echo -e "${GREEN}✓ netline.tar.gz created${NC}"
+    echo ""
+    echo "  To deploy on an offline machine:"
+    echo "    1. Copy netline.tar.gz to the target machine"
+    echo "    2. tar -xzf netline.tar.gz"
+    echo "    3. cd netline && ./start.sh"
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
