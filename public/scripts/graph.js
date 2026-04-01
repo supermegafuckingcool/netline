@@ -9,9 +9,13 @@ const LINK_STRENGTH      = -30; // node repulsion (more negative = further apart
 const DOT_GRID_SIZE      = 45;  // background dot grid spacing (px)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Resolve D3 link endpoint to string ID
+function resolveId(x) { return typeof x === "object" ? x.id : x; }
+
 // ── Event / Timeline state ────────────────────────────────────────────────────
-const ACTOR_BLUE = "#5153B4";
-const ACTOR_RED  = "#B45153";
+const ACTOR_BLUE   = "#5153B4";
+const ACTOR_RED    = "#B45153";
+const NODE_COLOR   = { fw: "#de8691", client: "#86dea8", server: "#86bcde" };
 const SEVERITY_COLORS = {
     none:     "#666",
     low:      "#6fcf97",
@@ -75,8 +79,8 @@ function drawGraph(data) {
 
     // Normalize links to string IDs (after simulation they become objects)
     data.links = data.links.map(l => ({
-        source: typeof l.source === "object" ? l.source.id : l.source,
-        target: typeof l.target === "object" ? l.target.id : l.target,
+        source: resolveId(l.source),
+        target: resolveId(l.target),
         label:  l.label || "",
     }));
 
@@ -139,6 +143,13 @@ function drawGraph(data) {
 
     const zoomLayer = svg.append("g");
 
+    // Node radius helper — used in simulation, collision, and rendering
+    function nodeRadius(d) {
+        if (d.type === "fw")     return 56 + NODE_SIZE;
+        if (d.type === "client") return 48 + NODE_SIZE;
+        return 52 + NODE_SIZE;
+    }
+
     // Build system lookup map before simulation (used in distance function)
     const systemMap = {};
     data.nodes.forEach(n => { systemMap[n.id] = n.system; });
@@ -148,8 +159,8 @@ function drawGraph(data) {
         .force("link", d3.forceLink(data.links)
             .id(d => d.id)
             .distance(d => {
-                const src = typeof d.source === "object" ? d.source.id : d.source;
-                const tgt = typeof d.target === "object" ? d.target.id : d.target;
+                const src = resolveId(d.source);
+                const tgt = resolveId(d.target);
                 return systemMap[src] === systemMap[tgt] ? LINK_DISTANCE_SAME : LINK_DISTANCE_DIFF;
             })
         )
@@ -157,11 +168,7 @@ function drawGraph(data) {
         .alphaMin(0.02)
         .force("charge", d3.forceManyBody().strength(LINK_STRENGTH))
         .force("center", d3.forceCenter(width / 2, height / 2))
-        .force("collision", d3.forceCollide(d => {
-            if (d.type === "fw")     return 56 + NODE_SIZE + 4;
-            if (d.type === "client") return 48 + NODE_SIZE + 4;
-            return 52 + NODE_SIZE + 4;
-        }));
+        .force("collision", d3.forceCollide(d => nodeRadius(d) + 4));
 
     // ============ Visual ============
 
@@ -171,8 +178,8 @@ function drawGraph(data) {
         .join("line")
         .attr("stroke", "#aaa")
         .attr("stroke-width", d => {
-            const src = typeof d.source === "object" ? d.source.id : d.source;
-            const tgt = typeof d.target === "object" ? d.target.id : d.target;
+            const src = resolveId(d.source);
+            const tgt = resolveId(d.target);
             return systemMap[src] === systemMap[tgt] ? 2 : 1;
         });
 
@@ -195,16 +202,8 @@ function drawGraph(data) {
         .call(drag(window.graphSimulation, tooltip, (v) => { isDragging = v; }));
 
     node.append("circle")
-        .attr("r", d => {
-            if (d.type === "fw")     return 56 + NODE_SIZE;
-            if (d.type === "client") return 48 + NODE_SIZE;
-            return 52 + NODE_SIZE;
-        })
-        .attr("fill", d => {
-            if (d.type === "fw")     return "#de8691";
-            if (d.type === "client") return "#86dea8";
-            return "#86bcde";
-        })
+        .attr("r", d => nodeRadius(d))
+        .attr("fill", d => NODE_COLOR[d.type] || NODE_COLOR.server)
         .attr("stroke", "none")
         .attr("stroke-width", 2.5);
 
@@ -216,11 +215,6 @@ function drawGraph(data) {
         .attr("font-size", FONT_SIZE);
 
     // ============ Hover ============
-    function nodeRadius(d) {
-        if (d.type === "fw")     return 56 + NODE_SIZE;
-        if (d.type === "client") return 48 + NODE_SIZE;
-        return 52 + NODE_SIZE;
-    }
 
     function positionTooltip(d) {
         const transform = d3.zoomTransform(svg.node());
@@ -323,8 +317,8 @@ function drawGraph(data) {
             .attr("x", d => (d.source.x + d.target.x) / 2)
             .attr("y", d => (d.source.y + d.target.y) / 2 - 5);
         node.attr("transform", d => `translate(${d.x}, ${d.y})`);
-        // Reposition event cards as nodes move
-        updateEventCards();
+        // Reposition event cards as nodes move (only when visible)
+        if (window._eventCardsEnabled) updateEventCards();
     });
 }
 
@@ -401,6 +395,7 @@ function updateActiveEvents(ms, fromPlayback) {
 
 // Exposed so timeline controls in ui.js can enable cards during play/step
 window.updateActiveEvents = updateActiveEvents;
+window.fmtTime = fmtTime;
 
 // ── Event cards anchored to nodes ─────────────────────────────────────────────
 window._eventCardsEnabled = false; // only show during play/step or when feed is open
@@ -533,7 +528,7 @@ function updateEventCards() {
 
 // ── Event feed (right panel) ──────────────────────────────────────────────────
 function updateEventFeed() {
-    const feed = document.getElementById("events-feed-list") || document.getElementById("event-feed-list");
+    const feed = document.getElementById("events-feed-list");
     if (!feed) return;
 
     // Always show ALL events (newest first), filtered by actor checkboxes
@@ -587,9 +582,6 @@ function updateEventFeed() {
     });
 }
 
-// ── Redraw event cards on zoom/pan ────────────────────────────────────────────
-window.refreshEventCards = updateEventCards;
-
 function drag(simulation, tooltip, setDragging) {
     function dragstarted(event, d) {
         if (!event.active) simulation.alphaTarget(0.3).restart();
@@ -625,8 +617,8 @@ window.addNodeToGraph = function(newNode) {
         newNode.connections.forEach(targetId => {
             // Only add if not already present
             const exists = data.links.some(l => {
-                const s = typeof l.source === "object" ? l.source.id : l.source;
-                return s === newNode.id && (typeof l.target === "object" ? l.target.id : l.target) === targetId;
+                const s = resolveId(l.source);
+                return s === newNode.id && (resolveId(l.target)) === targetId;
             });
             if (!exists) data.links.push({ source: newNode.id, target: targetId, label: "" });
         });

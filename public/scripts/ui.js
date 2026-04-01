@@ -1,4 +1,11 @@
 // ============ Sidebar ============
+// Shared time formatter — delegates to graph.js fmtTime if loaded, else fallback
+function fmtDatetime(d) {
+    if (!(d instanceof Date)) d = new Date(d);
+    if (typeof fmtTime === "function") return fmtTime(d);
+    const p = n => String(n).padStart(2, "0");
+    return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());
+}
 const sidebar      = document.getElementById("sidebar");
 const toggleBtn    = document.getElementById("sidebar-toggle-btn");
 const chevron      = document.getElementById("sidebar-chevron");
@@ -885,7 +892,7 @@ function renderNodeEvents(nodeId, container) {
     events.forEach(e => {
         const color = e.actor === "red" ? "#B45153" : "#5153B4";
         const sev   = { none:"#888", low:"#6fcf97", medium:"#f2c94c", high:"#f2994a", critical:"#eb5757" }[e.severity] || "#888";
-        const time  = (function(d){const p=n=>String(n).padStart(2,"0");return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());})(new Date(e.datetime));
+        const time  = fmtDatetime(e.datetime);
 
         const item = document.createElement("div");
         item.style.cssText = `border-left:3px solid ${color};padding:8px 10px;margin-bottom:6px;background:#f0eeee;border-radius:0 6px 6px 0;cursor:pointer;`;
