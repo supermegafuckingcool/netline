@@ -3,11 +3,38 @@
 // ── Visual constants — tweak these to adjust the graph appearance ─────────────
 const NODE_SIZE          = 0;   // added to all node radii
 const FONT_SIZE          = 12;  // node label font size (px)
-const LINK_DISTANCE_SAME = 120; // distance between nodes in the same system
-const LINK_DISTANCE_DIFF = 300; // distance between nodes in different systems
+const LINK_DISTANCE_SAME = 200; // distance between nodes in the same system
+const LINK_DISTANCE_DIFF = 320; // distance between nodes in different systems
 const LINK_STRENGTH      = -30; // node repulsion (more negative = further apart)
-const DOT_GRID_SIZE      = 30;  // background dot grid spacing (px)
+const DOT_GRID_SIZE      = 45;  // background dot grid spacing (px)
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── Event / Timeline state ────────────────────────────────────────────────────
+const ACTOR_BLUE = "#5153B4";
+const ACTOR_RED  = "#B45153";
+const SEVERITY_COLORS = {
+    none:     "#666",
+    low:      "#6fcf97",
+    medium:   "#f2c94c",
+    high:     "#f2994a",
+    critical: "#eb5757",
+};
+
+window.allEvents    = [];   // all events loaded from server
+
+// Format datetime as YYYY-MM-DD HH:MM (24h) in selected timezone
+function fmtTime(d) {
+    if (!(d instanceof Date)) d = new Date(d);
+    const tz = window.selectedTimezone || "Europe/Paris";
+    try {
+        return d.toLocaleString("sv-SE", { timeZone: tz }).slice(0, 16).replace("T", " ");
+    } catch(e) {
+        const p = n => String(n).padStart(2, "0");
+        return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());
+    }
+}
+window.currentTime  = null; // current slider datetime (ms)
+window.activeEvents = [];   // events up to currentTime
 // Load graph — fall back to empty graph if file doesn't exist
 fetch("/graph")
     .then(r => r.ok ? r.json() : { nodes: [], links: [] })
@@ -15,25 +42,33 @@ fetch("/graph")
     .then(function(data) {
         window.currentGraphData = data;
 
-        drawGraph(data);
+        // Load events then init timeline
+        fetch("/events")
+            .then(r => r.ok ? r.json() : [])
+            .catch(() => [])
+            .then(events => {
+                window.allEvents = events;
+                initTimeline();
+                drawGraph(data);
 
-        // Now that currentGraphData is ready, wire up sidebar panels
-        if (typeof wireNodeList  === "function") wireNodeList();
-        if (typeof wireJsonEditor === "function") wireJsonEditor();
+                // Wire up sidebar panels
+                if (typeof wireNodeList   === "function") wireNodeList();
+                if (typeof wireJsonEditor === "function") wireJsonEditor();
 
-        // Redraw whenever the canvas size changes (e.g. devtools open/close)
-        const canvasEl = document.getElementById("canvas");
-        new ResizeObserver(() => {
-            d3.select("#canvas svg")
-                .attr("width",  canvasEl.clientWidth)
-                .attr("height", canvasEl.clientHeight);
-            if (window.graphSimulation) {
-                window.graphSimulation
-                    .force("center", d3.forceCenter(canvasEl.clientWidth / 2, canvasEl.clientHeight / 2))
-                    .alpha(0.1)
-                    .restart();
-            }
-        }).observe(canvasEl);
+                // Redraw whenever canvas is resized (e.g. devtools open/close)
+                const canvasEl = document.getElementById("canvas");
+                new ResizeObserver(() => {
+                    d3.select("#canvas svg")
+                        .attr("width",  canvasEl.clientWidth)
+                        .attr("height", canvasEl.clientHeight);
+                    if (window.graphSimulation) {
+                        window.graphSimulation
+                            .force("center", d3.forceCenter(canvasEl.clientWidth / 2, canvasEl.clientHeight / 2))
+                            .alpha(0.1)
+                            .restart();
+                    }
+                }).observe(canvasEl);
+            });
     });
 
 function drawGraph(data) {
@@ -77,6 +112,7 @@ function drawGraph(data) {
         .style("pointer-events", "none")
         .style("box-shadow", "0 2px 6px rgba(0,0,0,0.12)")
         .style("white-space", "nowrap")
+        .style("z-index", "500")
         .style("display", "none");
 
     // ============ Background grid ============
@@ -103,6 +139,10 @@ function drawGraph(data) {
 
     const zoomLayer = svg.append("g");
 
+    // Build system lookup map before simulation (used in distance function)
+    const systemMap = {};
+    data.nodes.forEach(n => { systemMap[n.id] = n.system; });
+
     // ============ Physics ============
     window.graphSimulation = d3.forceSimulation(data.nodes)
         .force("link", d3.forceLink(data.links)
@@ -124,9 +164,6 @@ function drawGraph(data) {
         }));
 
     // ============ Visual ============
-    // Build a map for quick system lookup
-    const systemMap = {};
-    data.nodes.forEach(n => { systemMap[n.id] = n.system; });
 
     const link = zoomLayer.append("g")
         .selectAll("line")
@@ -194,7 +231,7 @@ function drawGraph(data) {
         const tipH = tooltip.node().offsetHeight;
         tooltip
             .style("left", (sx - tipW / 2) + "px")
-            .style("top",  (sy - r - tipH - 8) + "px");
+            .style("top",  (sy - r - tipH - 4) + "px");
     }
 
     let isDragging = false;
@@ -250,6 +287,7 @@ function drawGraph(data) {
         .scaleExtent([0.2, 4])
         .on("zoom", (event) => {
             const { transform } = event;
+            window._lastTransform = transform;
             zoomLayer.attr("transform", transform);
             pattern
                 .attr("x", transform.x)
@@ -258,6 +296,8 @@ function drawGraph(data) {
                 .attr("height", patternSize * transform.k);
             pattern.select("circle")
                 .attr("r", Math.max(0.5, 1 * transform.k));
+            // Reposition event cards on pan/zoom
+            updateEventCards();
         });
 
     svg.call(zoom);
@@ -283,8 +323,248 @@ function drawGraph(data) {
             .attr("x", d => (d.source.x + d.target.x) / 2)
             .attr("y", d => (d.source.y + d.target.y) / 2 - 5);
         node.attr("transform", d => `translate(${d.x}, ${d.y})`);
+        // Reposition event cards as nodes move
+        updateEventCards();
     });
 }
+
+// ============ Timeline ============
+function initTimeline() {
+    const events = window.allEvents;
+    const bar = document.getElementById("timeline-bar");
+    if (!bar) return;
+
+    if (events.length === 0) {
+        bar.style.display = "none";
+        document.getElementById("canvas").style.paddingTop = "0";
+        return;
+    }
+    bar.style.display = "flex";
+    // Position bar — positionTimeline sets padding too
+    if (typeof window.positionTimeline === "function") window.positionTimeline();
+    else {
+        bar.style.left  = "12px";
+        bar.style.right = "12px";
+        document.getElementById("canvas").style.paddingTop = "60px";
+    }
+
+    const times = events.map(e => new Date(e.datetime).getTime());
+    const minT  = Math.min(...times);
+    const maxT  = Math.max(...times);
+
+    // One clean stop before any events — exactly 1 minute before first event
+    const bufferT = minT - 60000;
+
+    window._timelineMin    = bufferT;
+    window._timelineMax    = maxT;
+    window._timelineBuffer = bufferT; // the "before events" stop
+
+    const slider = document.getElementById("timeline-slider");
+    slider.min   = bufferT;
+    slider.max   = maxT;
+    slider.value = bufferT;
+    window.currentTime = bufferT;
+
+    updateTimelineLabel(bufferT);
+    updateActiveEvents(bufferT);
+}
+
+function updateTimelineLabel(ms) {
+    const el = document.getElementById("timeline-label");
+    if (!el) return;
+    if (!ms) { el.textContent = ""; return; }
+    const d = new Date(ms);
+    el.textContent = fmtTime(d);
+}
+
+function updateActiveEvents(ms, fromPlayback) {
+    const prev = window.currentTime;
+    window.currentTime  = ms;
+    const showBlue = window._filterBlue !== false;
+    const showRed  = window._filterRed  !== false;
+    window.activeEvents = (window.allEvents || [])
+        .filter(e => new Date(e.datetime).getTime() <= ms)
+        .filter(e => e.actor === "blue" ? showBlue : showRed)
+        .sort((a, b) => new Date(b.datetime) - new Date(a.datetime));
+
+    // Cards only visible during playback/step or when feed is open
+    if (fromPlayback !== undefined) {
+        window._eventCardsEnabled = fromPlayback;
+    }
+
+    // Clear dismissed set when time actually changes so new step shows fresh cards
+    if (ms !== prev) window._dismissedCards = new Set();
+
+    updateEventCards();
+    updateEventFeed();
+}
+
+// Exposed so timeline controls in ui.js can enable cards during play/step
+window.updateActiveEvents = updateActiveEvents;
+
+// ── Event cards anchored to nodes ─────────────────────────────────────────────
+window._eventCardsEnabled = false; // only show during play/step or when feed is open
+window._dismissedCards    = new Set(); // nodeIds dismissed via X button
+
+function updateEventCards() {
+    const canvas = document.getElementById("canvas");
+    // Remove old cards
+    canvas.querySelectorAll(".event-card").forEach(el => el.remove());
+
+    if (!window._eventCardsEnabled) return;
+
+    const active = window.activeEvents || [];
+    if (!active.length || !window.graphSimulation) return;
+
+    // Show only events whose timestamp exactly equals the current slider position
+    const currentMs = window.currentTime || 0;
+    const bufferStop = window._timelineBuffer || 0;
+
+    // If we're at the buffer stop (before any events), show nothing
+    if (currentMs <= bufferStop) {
+        canvas.querySelectorAll(".event-card").forEach(el => el.remove());
+        return;
+    }
+
+    // Find events that exactly match the current time
+    const byNode = {};
+    active.forEach(e => {
+        const t = new Date(e.datetime).getTime();
+        if (t === currentMs) {
+            byNode[e.nodeId] = e;
+        }
+    });
+
+    // If no exact match, fall back to most recent per node
+    if (Object.keys(byNode).length === 0) {
+        active.forEach(e => {
+            if (!byNode[e.nodeId] || new Date(e.datetime) > new Date(byNode[e.nodeId].datetime)) {
+                byNode[e.nodeId] = e;
+            }
+        });
+    }
+
+    const nodes = (window.currentGraphData || {}).nodes || [];
+    const svg   = document.querySelector("#canvas svg");
+    if (!svg) return;
+    const transform = window._lastTransform || d3.zoomIdentity;
+
+    Object.entries(byNode).forEach(([nodeId, e]) => {
+        if ((window._dismissedCards || new Set()).has(nodeId)) return;
+        const node = nodes.find(n => n.id === nodeId);
+        if (!node || node.x == null) return;
+
+        const sx = transform.applyX(node.x);
+        const sy = transform.applyY(node.y);
+        const r  = (node.type === "fw" ? 56 : node.type === "client" ? 48 : 52) + NODE_SIZE;
+        const scaledR = r * transform.k;
+
+        const color = e.actor === "red" ? ACTOR_RED : ACTOR_BLUE;
+        const sev   = SEVERITY_COLORS[e.severity] || SEVERITY_COLORS.none;
+        const time  = fmtTime(e.datetime);
+
+        const card = document.createElement("div");
+        card.className = "event-card";
+        card.style.cssText = `
+            position:absolute;
+            left:${sx - 110}px;
+            top:${sy - scaledR - 6}px;
+            transform:translateY(-100%);
+            width:220px;
+            background:#1e1e1e;
+            border:2px solid ${color};
+            border-radius:8px;
+            padding:8px 10px;
+            font-size:11px;
+            font-family:Arial,sans-serif;
+            color:#eee;
+            pointer-events:none;
+            box-shadow:0 4px 12px rgba(0,0,0,0.4);
+            z-index:200;
+        `;
+        card.style.pointerEvents = "auto"; // allow X click
+        card.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="color:${color};font-weight:bold;font-size:10px;">${e.actor.toUpperCase()}</span>
+                    ${e.severity !== "none" ? `<span style="background:${sev};color:#111;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:bold;">${e.severity.toUpperCase()}</span>` : ""}
+                </div>
+                <button class="event-card-close" style="background:none;border:none;color:#888;cursor:pointer;font-size:13px;padding:0 2px;line-height:1;" title="Close">✕</button>
+            </div>
+            <div style="color:#aaa;font-size:10px;margin-bottom:3px;">${time}</div>
+            <div>${e.description}</div>
+            ${e.mitre ? `<div style="color:#aaa;font-size:10px;margin-top:2px;">MITRE: ${e.mitre}</div>` : ""}
+            ${e.tool  ? `<div style="color:#aaa;font-size:10px;">Tool: ${e.tool}</div>` : ""}
+            ${e.cve   ? `<div style="color:#aaa;font-size:10px;">CVE: ${e.cve}</div>` : ""}
+            ${e.srcIp ? `<div style="color:#aaa;font-size:10px;">Src: ${e.srcIp}</div>` : ""}
+            ${e.dstIp ? `<div style="color:#aaa;font-size:10px;">Dst: ${e.dstIp}</div>` : ""}
+        `;
+        card.querySelector(".event-card-close").addEventListener("click", () => {
+            window._dismissedCards.add(nodeId);
+            card.remove();
+        });
+        canvas.appendChild(card);
+    });
+}
+
+// ── Event feed (right panel) ──────────────────────────────────────────────────
+function updateEventFeed() {
+    const feed = document.getElementById("events-feed-list") || document.getElementById("event-feed-list");
+    if (!feed) return;
+
+    // Always show ALL events (newest first), filtered by actor checkboxes
+    const showBlue = window._filterBlue !== false;
+    const showRed  = window._filterRed  !== false;
+    const all = (window.allEvents || [])
+        .filter(e => e.actor === "blue" ? showBlue : showRed)
+        .sort((a, b) => new Date(b.datetime) - new Date(a.datetime));
+    feed.innerHTML = "";
+
+    if (all.length === 0) {
+        feed.innerHTML = `<div style="color:#666;font-size:12px;padding:12px;text-align:center;">No events yet</div>`;
+        return;
+    }
+
+    const nodes     = (window.currentGraphData || {}).nodes || [];
+    const currentMs = window.currentTime || 0;
+
+    all.forEach(e => {
+        const node     = nodes.find(n => n.id === e.nodeId);
+        const label    = node ? `${node.system} · ${node.hostname}` : e.nodeId;
+        const color    = e.actor === "red" ? ACTOR_RED : ACTOR_BLUE;
+        const sev      = SEVERITY_COLORS[e.severity] || SEVERITY_COLORS.none;
+        const time     = fmtTime(e.datetime);
+        const isPast   = new Date(e.datetime).getTime() <= currentMs;
+        const opacity  = isPast ? "1" : "0.35";
+
+        const item = document.createElement("div");
+        item.style.cssText = `
+            border-left:3px solid ${color};
+            padding:8px 10px;
+            margin-bottom:6px;
+            background:#2a2a2a;
+            border-radius:0 6px 6px 0;
+            cursor:pointer;
+            opacity:${opacity};
+        `;
+        item.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                <span style="color:#ccc;font-size:11px;font-weight:bold;">${label}</span>
+                ${e.severity !== "none" ? `<span style="background:${sev};color:#111;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:bold;">${e.severity.toUpperCase()}</span>` : ""}
+            </div>
+            <div style="color:#888;font-size:10px;margin-bottom:3px;">${time} · <span style="color:${color}">${e.actor.toUpperCase()}</span></div>
+            <div style="color:#ddd;font-size:11px;">${e.description}</div>
+            ${e.mitre ? `<div style="color:#888;font-size:10px;margin-top:2px;">MITRE: ${e.mitre}</div>` : ""}
+        `;
+        item.addEventListener("click", () => {
+            if (typeof window.selectNode === "function") window.selectNode(e.nodeId);
+        });
+        feed.appendChild(item);
+    });
+}
+
+// ── Redraw event cards on zoom/pan ────────────────────────────────────────────
+window.refreshEventCards = updateEventCards;
 
 function drag(simulation, tooltip, setDragging) {
     function dragstarted(event, d) {

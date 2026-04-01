@@ -22,6 +22,7 @@ model Node {
   linksFrom   Link[]   @relation("LinkSource")
   linksTo     Link[]   @relation("LinkTarget")
   note        Note?
+  events      Event[]
 }
 
 model NodeIp {
@@ -53,4 +54,24 @@ model Note {
   updatedAt DateTime @updatedAt
 
   node      Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+}
+
+model Event {
+  id          Int      @id @default(autoincrement())
+  nodeId      String
+  datetime    DateTime
+  description String   @db.Text
+  actor       String                          // "blue" | "red"
+  severity    String   @default("medium")     // "low" | "medium" | "high" | "critical"
+  mitre       String   @default("")
+  tool        String   @default("")
+  cve         String   @default("")
+  srcIp       String   @default("")
+  dstIp       String   @default("")
+  createdAt   DateTime @default(now())
+
+  node        Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId])
+  @@index([datetime])
 }

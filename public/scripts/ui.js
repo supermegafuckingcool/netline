@@ -131,6 +131,43 @@ const tabs = [
         `
     },
     {
+        id: "events",
+        icon: "images/icons/placeholder.svg",
+        label: "Events",
+        render: () => `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <h3 style="margin:0;">Events</h3>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <label style="font-size:11px;color:#888;font-weight:normal;">TZ</label>
+                    <select id="tz-select" style="font-size:11px;padding:3px 6px;border:1.5px solid #555;border-radius:5px;background:#3a3a3a;color:#eee;outline:none;">
+                        <option value="Europe/Paris">CET (Paris)</option>
+                        <option value="UTC">UTC</option>
+                        <option value="America/New_York">EST (New York)</option>
+                        <option value="America/Los_Angeles">PST (Los Angeles)</option>
+                        <option value="Asia/Tokyo">JST (Tokyo)</option>
+                        <option value="Asia/Shanghai">CST (Shanghai)</option>
+                        <option value="Europe/London">GMT (London)</option>
+                        <option value="Europe/Berlin">CET (Berlin)</option>
+                        <option value="Asia/Dubai">GST (Dubai)</option>
+                    </select>
+                </div>
+            </div>
+            <div style="display:flex;gap:16px;margin-bottom:10px;">
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;font-weight:normal;">
+                    <input type="checkbox" id="filter-blue" checked
+                        style="accent-color:#5153B4;width:14px;height:14px;" />
+                    <span style="color:#5153B4;font-weight:bold;">Own (Blue)</span>
+                </label>
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;font-weight:normal;">
+                    <input type="checkbox" id="filter-red" checked
+                        style="accent-color:#B45153;width:14px;height:14px;" />
+                    <span style="color:#B45153;font-weight:bold;">Enemy (Red)</span>
+                </label>
+            </div>
+            <div id="events-feed-list" style="overflow-y:auto;"></div>
+        `
+    },
+    {
         id: "json",
         icon: "images/icons/json.svg",
         label: "JSON",
@@ -157,8 +194,16 @@ tabs.forEach(tab => {
     const btn = document.createElement("button");
     btn.className = "sidebar-tab" + (tab.id === activeTab ? " active" : "");
     btn.title = tab.label;
-    btn.innerHTML = `<img src="${tab.icon}" alt="${tab.label}" />`;
-    btn.addEventListener("click", () => selectTab(tab.id));
+    // Events tab gets a small text label below the icon to fit neatly
+    if (tab.id === "events") {
+        btn.innerHTML = `<span style="font-size:9px;font-weight:bold;color:rgba(255,255,255,0.7);font-family:Arial,sans-serif;letter-spacing:0.05em;line-height:1;">EVENT</span>`;
+    } else {
+        btn.innerHTML = `<img src="${tab.icon}" alt="${tab.label}" />`;
+    }
+    btn.addEventListener("click", () => {
+        selectTab(tab.id);
+        if (tab.id === "events") setTimeout(wireEventsTab, 10);
+    });
     tabStrip.appendChild(btn);
 
     const panel = document.createElement("div");
@@ -189,6 +234,74 @@ tabs.forEach(tab => {
             <button id="node-detail-save-btn" class="form-btn-primary">Save Notes</button>
         </div>
         <div id="node-detail-error" style="font-size:12px;color:#f1948a;min-height:16px;margin-top:6px;"></div>
+
+        <hr style="border:none;border-top:1.5px solid #ddd;margin:16px 0 12px" />
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <h3 style="margin:0;font-size:14px;">Events</h3>
+            <button id="node-detail-add-event-btn" class="form-btn-secondary" style="font-size:12px;padding:5px 12px;">+ Add Event</button>
+        </div>
+
+        <div id="node-detail-event-form" style="display:none;background:#f0eeee;border-radius:8px;padding:12px;margin-bottom:12px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                <div class="field-group" style="grid-column:1/-1">
+                    <label>Date &amp; Time</label>
+                    <div style="display:flex;gap:6px;">
+                        <input id="ev-date" type="date" style="flex:1;padding:7px 10px;border:1.5px solid #ccc;border-radius:6px;font-size:13px;font-family:Arial,sans-serif;outline:none;" />
+                        <input id="ev-time" type="text" placeholder="HH:MM" maxlength="5" pattern="[0-9]{2}:[0-9]{2}" style="width:75px;padding:7px 10px;border:1.5px solid #ccc;border-radius:6px;font-size:13px;font-family:Arial,sans-serif;outline:none;" />
+                    </div>
+                    <input id="ev-datetime" type="hidden" />
+                </div>
+                <div class="field-group" style="grid-column:1/-1">
+                    <label>Description</label>
+                    <textarea id="ev-description" rows="2" style="resize:vertical;padding:7px 10px;border:1.5px solid #ccc;border-radius:6px;font-size:13px;font-family:Arial,sans-serif;outline:none;width:100%;"></textarea>
+                </div>
+                <div class="field-group">
+                    <label>Actor</label>
+                    <select id="ev-actor" style="border-color:#ccc;color:#5153B4;font-weight:bold;background:#e8e8f8;">
+                        <option value="blue">Own (Blue)</option>
+                        <option value="red">Enemy (Red)</option>
+                    </select>
+                </div>
+                <div class="field-group">
+                    <label>Severity</label>
+                    <select id="ev-severity">
+                        <option value="none" selected>None</option>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                        <option value="critical">Critical</option>
+                    </select>
+                </div>
+                <div class="field-group">
+                    <label>Source IP <span style="font-weight:normal;color:#888">(optional)</span></label>
+                    <input id="ev-srcip" type="text" placeholder="e.g. 10.0.1.5" />
+                </div>
+                <div class="field-group">
+                    <label>Dest IP <span style="font-weight:normal;color:#888">(optional)</span></label>
+                    <input id="ev-dstip" type="text" placeholder="e.g. 10.0.1.1" />
+                </div>
+                <div class="field-group">
+                    <label>MITRE ATT&CK <span style="font-weight:normal;color:#888">(optional)</span></label>
+                    <input id="ev-mitre" type="text" placeholder="e.g. T1078" />
+                </div>
+                <div class="field-group">
+                    <label>Tool <span style="font-weight:normal;color:#888">(optional)</span></label>
+                    <input id="ev-tool" type="text" placeholder="e.g. Mimikatz" />
+                </div>
+                <div class="field-group" style="grid-column:1/-1">
+                    <label>CVE <span style="font-weight:normal;color:#888">(optional)</span></label>
+                    <input id="ev-cve" type="text" placeholder="e.g. CVE-2021-44228" />
+                </div>
+            </div>
+            <div id="ev-error" style="font-size:12px;color:#c0392b;min-height:14px;margin-bottom:6px;"></div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;">
+                <button id="ev-cancel-btn" class="form-btn-secondary" style="font-size:12px;padding:5px 12px;">Cancel</button>
+                <button id="ev-save-btn" class="form-btn-primary" style="font-size:12px;padding:5px 14px;">Save Event</button>
+            </div>
+        </div>
+
+        <div id="node-detail-events-list"></div>
     `;
     contentPanel.appendChild(panel);
 })();
@@ -196,12 +309,110 @@ tabs.forEach(tab => {
 wireAddNodeForm();
 // wireNodeList and wireJsonEditor called by graph.js once data is ready
 
-// Load notes from notes.json into memory
+// Load notes into memory
 window.nodeNotes = {};
 fetch("/notes")
     .then(r => r.ok ? r.json() : {})
     .catch(() => ({}))
     .then(data => { window.nodeNotes = data; });
+
+// ============ Timeline controls ============
+(function() {
+    let playing = false;
+    let playInterval = null;
+
+    const slider    = document.getElementById("timeline-slider");
+    const playBtn   = document.getElementById("tl-play-pause");
+    const stepBack  = document.getElementById("tl-step-back");
+    const stepFwd   = document.getElementById("tl-step-fwd");
+    if (!slider) return;
+
+    function getEvents() { return window.allEvents || []; }
+
+    function getSortedTimes() {
+        const eventTimes = [...new Set(getEvents().map(e => new Date(e.datetime).getTime()))].sort((a,b) => a-b);
+        // Always include the buffer "before events" stop as the first snap point
+        const buf = window._timelineBuffer;
+        if (buf != null && (eventTimes.length === 0 || eventTimes[0] !== buf)) {
+            return [buf, ...eventTimes];
+        }
+        return eventTimes;
+    }
+
+    function setTime(ms, fromPlayback) {
+        const events = getEvents();
+        if (!events.length) return;
+        const min = window._timelineMin;
+        const max = window._timelineMax;
+        ms = Math.max(min, Math.min(max, ms));
+        slider.value = ms;
+        if (typeof updateTimelineLabel === "function") updateTimelineLabel(ms);
+        if (typeof window.updateActiveEvents === "function") window.updateActiveEvents(ms, fromPlayback || false);
+    }
+
+    // Slider drag — snaps to nearest event time and shows cards
+    slider.addEventListener("input", () => {
+        const times = getSortedTimes();
+        if (!times.length) return;
+        const val = parseInt(slider.value);
+        const nearest = times.reduce((a, b) => Math.abs(b - val) < Math.abs(a - val) ? b : a);
+        slider.value = nearest;
+        setTime(nearest, true);
+    });
+
+    stepBack.addEventListener("click", () => {
+        const times = getSortedTimes();
+        const cur   = parseInt(slider.value);
+        const prev  = [...times].reverse().find(t => t < cur);
+        if (prev != null) setTime(prev, true);
+    });
+
+    stepFwd.addEventListener("click", () => {
+        const times = getSortedTimes();
+        const cur   = parseInt(slider.value);
+        const next  = times.find(t => t > cur);
+        if (next != null) setTime(next, true);
+    });
+
+    playBtn.addEventListener("click", () => {
+        playing = !playing;
+        playBtn.innerHTML = playing ? "&#9646;&#9646;" : "&#9654;";
+        if (playing) {
+            // If at end, restart
+            const times = getSortedTimes();
+            if (times.length && parseInt(slider.value) >= times[times.length - 1]) {
+                setTime(times[0]);
+            }
+            playInterval = setInterval(() => {
+                const times = getSortedTimes();
+                const cur   = parseInt(slider.value);
+                const next  = times.find(t => t > cur);
+                if (next != null) {
+                    slider.value = next;
+                    setTime(next, true);
+                } else {
+                    playing = false;
+                    playBtn.innerHTML = "&#9654;";
+                    clearInterval(playInterval);
+                    window._eventCardsEnabled = false;
+                    if (typeof window.updateActiveEvents === "function")
+                        window.updateActiveEvents(parseInt(slider.value), false);
+                }
+            }, 1200);
+        } else {
+            clearInterval(playInterval);
+            window._eventCardsEnabled = false;
+            if (typeof window.updateActiveEvents === "function")
+                window.updateActiveEvents(parseInt(slider.value), false);
+        }
+    });
+
+    // openEventFeed — opens events tab in sidebar
+    window.openEventFeed = function() {
+        selectTab("events");
+        setTimeout(wireEventsTab, 10);
+    };
+})();
 
 // ============ Simple markdown renderer ============
 function renderMarkdown(text) {
@@ -620,7 +831,103 @@ function renderNodeList() {
 
 window.refreshNodeList = renderNodeList;
 
+// ============ Events Tab ============
+function wireEventsTab() {
+    const tzSel = document.getElementById("tz-select");
+    if (tzSel && !tzSel._wired) {
+        tzSel._wired = true;
+        window.selectedTimezone = "Europe/Paris";
+        tzSel.value = "Europe/Paris";
+        tzSel.addEventListener("change", function() {
+            window.selectedTimezone = this.value;
+            if (typeof updateEventFeed === "function") updateEventFeed();
+        });
+    }
+
+    // Filter checkboxes
+    const filterBlue = document.getElementById("filter-blue");
+    const filterRed  = document.getElementById("filter-red");
+    if (filterBlue && !filterBlue._wired) {
+        filterBlue._wired = true;
+        filterRed._wired  = true;
+        const onChange = () => {
+            window._filterBlue = filterBlue.checked;
+            window._filterRed  = filterRed.checked;
+            if (typeof updateEventFeed      === "function") updateEventFeed();
+            if (typeof updateActiveEvents   === "function") updateActiveEvents(window.currentTime || 0);
+        };
+        filterBlue.addEventListener("change", onChange);
+        filterRed.addEventListener("change",  onChange);
+        // Init globals
+        window._filterBlue = true;
+        window._filterRed  = true;
+    }
+
+    if (typeof updateEventFeed === "function") updateEventFeed();
+}
+window.wireEventsTab = wireEventsTab;
+
 // ============ Node Detail Panel ============
+
+// ── Render events list inside node detail panel ──────────────────────────────
+function renderNodeEvents(nodeId, container) {
+    if (!container) return;
+    const events = (window.allEvents || [])
+        .filter(e => e.nodeId === nodeId)
+        .sort((a, b) => new Date(b.datetime) - new Date(a.datetime));
+
+    container.innerHTML = "";
+    if (events.length === 0) {
+        container.innerHTML = `<p style="color:#888;font-size:12px;font-weight:normal;margin:0;">No events yet.</p>`;
+        return;
+    }
+
+    events.forEach(e => {
+        const color = e.actor === "red" ? "#B45153" : "#5153B4";
+        const sev   = { none:"#888", low:"#6fcf97", medium:"#f2c94c", high:"#f2994a", critical:"#eb5757" }[e.severity] || "#888";
+        const time  = (function(d){const p=n=>String(n).padStart(2,"0");return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());})(new Date(e.datetime));
+
+        const item = document.createElement("div");
+        item.style.cssText = `border-left:3px solid ${color};padding:8px 10px;margin-bottom:6px;background:#f0eeee;border-radius:0 6px 6px 0;`;
+        item.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
+                <span style="color:${color};font-size:11px;font-weight:bold;">${e.actor.toUpperCase()}</span>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <span style="background:${sev};color:#111;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:bold;">${e.severity.toUpperCase()}</span>
+                    <button data-evid="${e.id}" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:12px;padding:0;" title="Delete">✕</button>
+                </div>
+            </div>
+            <div style="color:#888;font-size:10px;margin-bottom:3px;">${time}</div>
+            <div style="font-size:12px;font-weight:normal;color:#333;">${e.description}</div>
+            ${e.mitre ? `<div style="color:#888;font-size:10px;margin-top:2px;">MITRE: ${e.mitre}</div>` : ""}
+            ${e.tool  ? `<div style="color:#888;font-size:10px;">Tool: ${e.tool}</div>` : ""}
+            ${e.cve   ? `<div style="color:#888;font-size:10px;">CVE: ${e.cve}</div>` : ""}
+            ${e.srcIp ? `<div style="color:#888;font-size:10px;">Src: ${e.srcIp}</div>` : ""}
+            ${e.dstIp ? `<div style="color:#888;font-size:10px;">Dst: ${e.dstIp}</div>` : ""}
+        `;
+
+        item.querySelector("[data-evid]").addEventListener("click", () => {
+            if (!confirm("Delete this event?")) return;
+            fetch("/delete-event", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: e.id })
+            })
+            .then(r => r.json())
+            .then(res => {
+                if (res.ok) {
+                    window.allEvents = window.allEvents.filter(ev => ev.id !== e.id);
+                    if (typeof initTimeline      === "function") initTimeline();
+                    if (typeof updateActiveEvents === "function") updateActiveEvents(window.currentTime || 0);
+                    renderNodeEvents(nodeId, container);
+                }
+            });
+        });
+
+        container.appendChild(item);
+    });
+}
+
 // Escape HTML special chars to prevent XSS when injecting into innerHTML
 function escHtml(s) {
     return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -630,6 +937,19 @@ window.selectNode = function(id) {
     const data  = window.currentGraphData || {};
     const node  = (data.nodes || []).find(n => n.id === id);
     if (!node) return;
+
+    // If this node's panel is already open, close sidebar and deselect
+    if (activeTab === "node-detail" && sidebarOpen &&
+        document.getElementById("node-detail-title")?.textContent === node.system + " · " + node.hostname) {
+        closeSidebar();
+        if (typeof window.setHighlightedNodes === "function") {
+            const current = Array.from(document.querySelectorAll(".node-list-item.selected")).map(el => el.dataset.id);
+            const idx = current.indexOf(id);
+            if (idx !== -1) current.splice(idx, 1);
+            window.setHighlightedNodes(current);
+        }
+        return;
+    }
 
     document.getElementById("node-detail-title").textContent = node.system + " · " + node.hostname;
 
@@ -729,6 +1049,97 @@ window.selectNode = function(id) {
         }, 50);
     });
 
+    // ── Event form ────────────────────────────────────────────────────────────
+    const addEvBtn = document.getElementById("node-detail-add-event-btn");
+    const evForm   = document.getElementById("node-detail-event-form");
+    const evList   = document.getElementById("node-detail-events-list");
+
+    // Default datetime to now
+    const now = new Date();
+    const pad = n => String(n).padStart(2, "0");
+    document.getElementById("ev-date").value =
+        `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+    const evTimeEl = document.getElementById("ev-time");
+    evTimeEl.value = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    // Auto-insert colon after two digits
+    evTimeEl.addEventListener("input", function() {
+        let v = this.value.replace(/[^0-9]/g, "");
+        if (v.length >= 3) v = v.slice(0,2) + ":" + v.slice(2,4);
+        this.value = v;
+    });
+
+    // Actor select colour
+    const actorSel = document.getElementById("ev-actor");
+    function updateActorColour() {
+        const c  = actorSel.value === "red" ? "#B45153" : "#5153B4";
+        const bg = actorSel.value === "red" ? "#f8e8e8" : "#e8e8f8";
+        actorSel.style.borderColor = "#ccc";   // same grey as other fields
+        actorSel.style.color       = c;
+        actorSel.style.background  = bg;
+    }
+    actorSel.onchange = updateActorColour;
+    updateActorColour();
+
+    // Re-wire buttons by cloning to remove old listeners
+    const newAddEvBtn = addEvBtn.cloneNode(true);
+    addEvBtn.parentNode.replaceChild(newAddEvBtn, addEvBtn);
+    newAddEvBtn.addEventListener("click", () => {
+        evForm.style.display = evForm.style.display === "none" ? "block" : "none";
+    });
+
+    const evCancel = document.getElementById("ev-cancel-btn");
+    const newEvCancel = evCancel.cloneNode(true);
+    evCancel.parentNode.replaceChild(newEvCancel, evCancel);
+    newEvCancel.addEventListener("click", () => {
+        evForm.style.display = "none";
+    });
+
+    const evSave = document.getElementById("ev-save-btn");
+    const newEvSave = evSave.cloneNode(true);
+    evSave.parentNode.replaceChild(newEvSave, evSave);
+    newEvSave.addEventListener("click", () => {
+        const evDate      = document.getElementById("ev-date").value;
+        const evTime      = document.getElementById("ev-time").value || "00:00";
+        const datetime    = evDate ? `${evDate}T${evTime}` : "";
+        const description = document.getElementById("ev-description").value.trim();
+        const actor       = document.getElementById("ev-actor").value;
+        const severity    = document.getElementById("ev-severity").value;
+        const srcIp       = document.getElementById("ev-srcip").value.trim();
+        const dstIp       = document.getElementById("ev-dstip").value.trim();
+        const mitre       = document.getElementById("ev-mitre").value.trim();
+        const tool        = document.getElementById("ev-tool").value.trim();
+        const cve         = document.getElementById("ev-cve").value.trim();
+        const errorEl     = document.getElementById("ev-error");
+
+        if (!datetime)    { errorEl.textContent = "Date & Time is required."; return; }
+        if (!description) { errorEl.textContent = "Description is required."; return; }
+        errorEl.textContent = "";
+
+        fetch("/add-event", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ nodeId: node.id, datetime, description, actor, severity, srcIp, dstIp, mitre, tool, cve })
+        })
+        .then(r => r.json())
+        .then(res => {
+            if (res.error) { errorEl.textContent = res.error; return; }
+            window.allEvents = window.allEvents || [];
+            window.allEvents.push(res.event);
+            if (typeof initTimeline      === "function") initTimeline();
+            if (typeof updateActiveEvents === "function") updateActiveEvents(window.currentTime || new Date(res.event.datetime).getTime());
+            renderNodeEvents(node.id, evList);
+            // Clear form fields and collapse
+            ["ev-description","ev-srcip","ev-dstip","ev-mitre","ev-tool","ev-cve"]
+                .forEach(id => document.getElementById(id).value = "");
+            evForm.style.display = "none";
+            if (typeof window.openEventFeed === "function") window.openEventFeed();
+        })
+        .catch(() => { document.getElementById("ev-error").textContent = "Server error."; });
+    });
+
+    // Show existing events for this node
+    renderNodeEvents(node.id, evList);
+
     // Open detail panel
     activeTab = "node-detail";
     tabStrip.querySelectorAll(".sidebar-tab").forEach(btn => btn.classList.remove("active"));
@@ -759,16 +1170,31 @@ function selectTab(id) {
     if (!sidebarOpen) openSidebar();
 }
 
+function positionTimeline() {
+    const bar  = document.getElementById("timeline-bar");
+    if (!bar || bar.style.display === "none") return;
+    const sbW  = sidebarOpen ? (sidebar.clientWidth || 0) : 0;
+    // Left: always at least 80px from screen edge to clear sidebar toggle button
+    const leftPx = Math.max(80, sbW + 12);
+    bar.style.left  = leftPx + "px";
+    bar.style.right = "78px";
+    document.getElementById("canvas").style.paddingTop = "60px";
+}
+
+window.positionTimeline = positionTimeline;
+
 function openSidebar() {
     sidebarOpen = true;
     sidebar.classList.add("open");
     chevron.style.transform = "scaleX(1)";
+    positionTimeline();
 }
 
 function closeSidebar() {
     sidebarOpen = false;
     sidebar.classList.remove("open");
     chevron.style.transform = "scaleX(-1)";
+    positionTimeline();
 }
 
 toggleBtn.addEventListener("click", () => {

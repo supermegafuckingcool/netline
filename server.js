@@ -320,6 +320,56 @@ http.createServer(async (req, res) => {
             return json(res, 200, { ok: true, imported });
         }
 
+        // ── GET /events ────────────────────────────────────────────────────
+        if (req.method === "GET" && req.url === "/events") {
+            const events = await prisma.event.findMany({
+                orderBy: { datetime: "asc" },
+            });
+            return json(res, 200, events.map(e => ({
+                id:          e.id,
+                nodeId:      e.nodeId,
+                datetime:    e.datetime.toISOString(),
+                description: e.description,
+                actor:       e.actor,
+                severity:    e.severity,
+                mitre:       e.mitre,
+                tool:        e.tool,
+                cve:         e.cve,
+                srcIp:       e.srcIp,
+                dstIp:       e.dstIp,
+            })));
+        }
+
+        // ── POST /add-event ─────────────────────────────────────────────────
+        if (req.method === "POST" && req.url === "/add-event") {
+            const body = await readBody(req);
+            const event = await prisma.event.create({
+                data: {
+                    nodeId:      body.nodeId,
+                    datetime:    new Date(body.datetime),
+                    description: body.description || "",
+                    actor:       body.actor || "blue",
+                    severity:    body.severity || "medium",
+                    mitre:       body.mitre || "",
+                    tool:        body.tool || "",
+                    cve:         body.cve || "",
+                    srcIp:       body.srcIp || "",
+                    dstIp:       body.dstIp || "",
+                }
+            });
+            return json(res, 200, { ok: true, event: {
+                ...event,
+                datetime: event.datetime.toISOString(),
+            }});
+        }
+
+        // ── POST /delete-event ──────────────────────────────────────────────
+        if (req.method === "POST" && req.url === "/delete-event") {
+            const { id } = await readBody(req);
+            await prisma.event.delete({ where: { id: parseInt(id) } });
+            return json(res, 200, { ok: true });
+        }
+
         // ── Static file serving ─────────────────────────────────────────────
         let filePath = "./public" + req.url;
         filePath = filePath.split("?")[0];
