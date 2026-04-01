@@ -363,6 +363,28 @@ http.createServer(async (req, res) => {
             }});
         }
 
+        // ── POST /edit-event ────────────────────────────────────────────────
+        if (req.method === "POST" && req.url === "/edit-event") {
+            const body = await readBody(req);
+            const event = await prisma.event.update({
+                where: { id: parseInt(body.id) },
+                data: {
+                    datetime:    new Date(body.datetime),
+                    description: body.description || "",
+                    actor:       body.actor || "blue",
+                    severity:    body.severity || "none",
+                    mitre:       body.mitre || "",
+                    tool:        body.tool  || "",
+                    cve:         body.cve   || "",
+                    srcIp:       body.srcIp || "",
+                    dstIp:       body.dstIp || "",
+                }
+            });
+            return json(res, 200, { ok: true, event: {
+                ...event, datetime: event.datetime.toISOString()
+            }});
+        }
+
         // ── POST /delete-event ──────────────────────────────────────────────
         if (req.method === "POST" && req.url === "/delete-event") {
             const { id } = await readBody(req);

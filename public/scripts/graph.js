@@ -463,14 +463,36 @@ function updateEventCards() {
         const sev   = SEVERITY_COLORS[e.severity] || SEVERITY_COLORS.none;
         const time  = fmtTime(e.datetime);
 
+        // Card centered above node with a stem connecting it
+        const cardW   = 200;
+        const stemH   = 10; // px gap between card bottom and node top
+        const cardLeft = sx - cardW / 2;
+        const cardTop  = sy - scaledR - stemH;
+
+        // Stem — a thin coloured line from card bottom to node edge
+        const stem = document.createElement("div");
+        stem.className = "event-card";
+        stem.dataset.stemFor = nodeId;
+        stem.style.cssText = `
+            position:absolute;
+            left:${sx - 1}px;
+            top:${sy - scaledR}px;
+            width:2px;
+            height:${stemH}px;
+            background:${color};
+            pointer-events:none;
+            z-index:199;
+        `;
+        canvas.appendChild(stem);
+
         const card = document.createElement("div");
         card.className = "event-card";
         card.style.cssText = `
             position:absolute;
-            left:${sx - 110}px;
-            top:${sy - scaledR - 6}px;
+            left:${cardLeft}px;
+            top:${cardTop}px;
             transform:translateY(-100%);
-            width:220px;
+            width:${cardW}px;
             background:#1e1e1e;
             border:2px solid ${color};
             border-radius:8px;
@@ -479,10 +501,10 @@ function updateEventCards() {
             font-family:Arial,sans-serif;
             color:#eee;
             pointer-events:none;
-            box-shadow:0 4px 12px rgba(0,0,0,0.4);
+            box-shadow:0 4px 12px rgba(0,0,0,0.5);
             z-index:200;
         `;
-        card.style.pointerEvents = "auto"; // allow X click
+        card.style.pointerEvents = "auto";
         card.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -502,6 +524,8 @@ function updateEventCards() {
         card.querySelector(".event-card-close").addEventListener("click", () => {
             window._dismissedCards.add(nodeId);
             card.remove();
+            // Also remove the stem
+            document.querySelector(`[data-stem-for="${nodeId}"]`)?.remove();
         });
         canvas.appendChild(card);
     });

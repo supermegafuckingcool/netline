@@ -888,13 +888,14 @@ function renderNodeEvents(nodeId, container) {
         const time  = (function(d){const p=n=>String(n).padStart(2,"0");return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());})(new Date(e.datetime));
 
         const item = document.createElement("div");
-        item.style.cssText = `border-left:3px solid ${color};padding:8px 10px;margin-bottom:6px;background:#f0eeee;border-radius:0 6px 6px 0;`;
+        item.style.cssText = `border-left:3px solid ${color};padding:8px 10px;margin-bottom:6px;background:#f0eeee;border-radius:0 6px 6px 0;cursor:pointer;`;
         item.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
                 <span style="color:${color};font-size:11px;font-weight:bold;">${e.actor.toUpperCase()}</span>
                 <div style="display:flex;gap:6px;align-items:center;">
-                    <span style="background:${sev};color:#111;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:bold;">${e.severity.toUpperCase()}</span>
-                    <button data-evid="${e.id}" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:12px;padding:0;" title="Delete">✕</button>
+                    ${e.severity !== "none" ? `<span style="background:${sev};color:#111;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:bold;">${e.severity.toUpperCase()}</span>` : ""}
+                    <button data-edit="${e.id}" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:11px;padding:0 2px;" title="Edit">✎</button>
+                    <button data-evid="${e.id}" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:12px;padding:0 2px;" title="Delete">✕</button>
                 </div>
             </div>
             <div style="color:#888;font-size:10px;margin-bottom:3px;">${time}</div>
@@ -906,7 +907,58 @@ function renderNodeEvents(nodeId, container) {
             ${e.dstIp ? `<div style="color:#888;font-size:10px;">Dst: ${e.dstIp}</div>` : ""}
         `;
 
-        item.querySelector("[data-evid]").addEventListener("click", () => {
+        // Click item body — seek timeline to this event and show card
+        item.addEventListener("click", ev => {
+            if (ev.target.closest("button")) return; // ignore button clicks
+            const ms = new Date(e.datetime).getTime();
+            const slider = document.getElementById("timeline-slider");
+            if (slider) {
+                slider.value = ms;
+                if (typeof updateTimelineLabel === "function") updateTimelineLabel(ms);
+                if (typeof window.updateActiveEvents === "function") window.updateActiveEvents(ms, true);
+            }
+        });
+
+        // Edit button — pre-fill the add-event form
+        item.querySelector("[data-edit]").addEventListener("click", ev => {
+            ev.stopPropagation();
+            const evForm = document.getElementById("node-detail-event-form");
+            if (!evForm) return;
+            evForm.style.display = "block";
+            evForm.dataset.editId = e.id; // mark as edit mode
+
+            // Pre-fill fields
+            const dt = new Date(e.datetime);
+            const pad = n => String(n).padStart(2, "0");
+            document.getElementById("ev-date").value = `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
+            document.getElementById("ev-time").value = `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+            document.getElementById("ev-description").value = e.description || "";
+            document.getElementById("ev-actor").value    = e.actor || "blue";
+            document.getElementById("ev-severity").value = e.severity || "none";
+            document.getElementById("ev-srcip").value   = e.srcIp || "";
+            document.getElementById("ev-dstip").value   = e.dstIp || "";
+            document.getElementById("ev-mitre").value   = e.mitre || "";
+            document.getElementById("ev-tool").value    = e.tool  || "";
+            document.getElementById("ev-cve").value     = e.cve   || "";
+
+            // Update actor colour
+            const actorSel = document.getElementById("ev-actor");
+            const c  = actorSel.value === "red" ? "#B45153" : "#5153B4";
+            const bg = actorSel.value === "red" ? "#f8e8e8" : "#e8e8f8";
+            actorSel.style.borderColor = "#ccc";
+            actorSel.style.color = c;
+            actorSel.style.background = bg;
+
+            // Change save button label
+            const saveBtn = document.getElementById("ev-save-btn");
+            if (saveBtn) saveBtn.textContent = "Update Event";
+
+            evForm.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+
+        // Delete button
+        item.querySelector("[data-evid]").addEventListener("click", ev => {
+            ev.stopPropagation();
             if (!confirm("Delete this event?")) return;
             fetch("/delete-event", {
                 method: "POST",
@@ -1092,6 +1144,8 @@ window.selectNode = function(id) {
     evCancel.parentNode.replaceChild(newEvCancel, evCancel);
     newEvCancel.addEventListener("click", () => {
         evForm.style.display = "none";
+        delete evForm.dataset.editId;
+        newEvSave.textContent = "Save Event";
     });
 
     const evSave = document.getElementById("ev-save-btn");
@@ -1115,24 +1169,36 @@ window.selectNode = function(id) {
         if (!description) { errorEl.textContent = "Description is required."; return; }
         errorEl.textContent = "";
 
-        fetch("/add-event", {
+        const editId = evForm.dataset.editId;
+        const isEdit = !!editId;
+        const url    = isEdit ? "/edit-event" : "/add-event";
+        const body   = isEdit
+            ? { id: parseInt(editId), datetime, description, actor, severity, srcIp, dstIp, mitre, tool, cve }
+            : { nodeId: node.id, datetime, description, actor, severity, srcIp, dstIp, mitre, tool, cve };
+
+        fetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ nodeId: node.id, datetime, description, actor, severity, srcIp, dstIp, mitre, tool, cve })
+            body: JSON.stringify(body)
         })
         .then(r => r.json())
         .then(res => {
             if (res.error) { errorEl.textContent = res.error; return; }
-            window.allEvents = window.allEvents || [];
-            window.allEvents.push(res.event);
+            if (isEdit) {
+                const idx = (window.allEvents || []).findIndex(ev => ev.id === res.event.id);
+                if (idx !== -1) window.allEvents[idx] = res.event;
+            } else {
+                window.allEvents = window.allEvents || [];
+                window.allEvents.push(res.event);
+            }
             if (typeof initTimeline      === "function") initTimeline();
             if (typeof updateActiveEvents === "function") updateActiveEvents(window.currentTime || new Date(res.event.datetime).getTime());
             renderNodeEvents(node.id, evList);
-            // Clear form fields and collapse
             ["ev-description","ev-srcip","ev-dstip","ev-mitre","ev-tool","ev-cve"]
-                .forEach(id => document.getElementById(id).value = "");
+                .forEach(fid => document.getElementById(fid).value = "");
+            delete evForm.dataset.editId;
+            newEvSave.textContent = "Save Event";
             evForm.style.display = "none";
-            if (typeof window.openEventFeed === "function") window.openEventFeed();
         })
         .catch(() => { document.getElementById("ev-error").textContent = "Server error."; });
     });
