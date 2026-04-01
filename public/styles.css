@@ -56,12 +56,32 @@ body {
     width: 0;
     overflow: hidden;
     transition: width 0.3s ease;
+    min-width: 0;
+    max-width: 80vw;
     z-index: 150;
 }
 
 #sidebar.open {
     width: 35%;
     box-shadow: 4px 0 24px rgba(0,0,0,0.18);
+}
+
+/* Resize handle on the right edge of the sidebar */
+#sidebar-resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 5px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 160;
+    background: transparent;
+    transition: background 0.15s ease;
+}
+
+#sidebar-resize-handle:hover,
+#sidebar-resize-handle.dragging {
+    background: rgba(222,134,145,0.5);
 }
 
 /* Slim tab strip */

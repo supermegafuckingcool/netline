@@ -1259,6 +1259,7 @@ function openSidebar() {
 function closeSidebar() {
     sidebarOpen = false;
     sidebar.classList.remove("open");
+    sidebar.style.width = ""; // clear any inline width from resizing
     chevron.style.transform = "scaleX(-1)";
     positionTimeline();
 }
@@ -1266,6 +1267,41 @@ function closeSidebar() {
 toggleBtn.addEventListener("click", () => {
     sidebarOpen ? closeSidebar() : openSidebar();
 });
+
+// ============ Sidebar resize ============
+(function() {
+    const handle = document.getElementById("sidebar-resize-handle");
+    if (!handle) return;
+
+    let startX, startWidth;
+
+    handle.addEventListener("mousedown", e => {
+        if (!sidebarOpen) return;
+        e.preventDefault();
+        startX     = e.clientX;
+        startWidth = sidebar.offsetWidth;
+        handle.classList.add("dragging");
+
+        // Disable transition during drag for instant feedback
+        sidebar.style.transition = "none";
+
+        function onMove(e) {
+            const dx       = e.clientX - startX;
+            const newWidth = Math.max(200, Math.min(window.innerWidth * 0.8, startWidth + dx));
+            sidebar.style.width = newWidth + "px";
+        }
+
+        function onUp() {
+            handle.classList.remove("dragging");
+            sidebar.style.transition = "";
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup",   onUp);
+        }
+
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup",   onUp);
+    });
+})();
 
 window.openAddNodePanel = function() { selectTab("add-node"); };
 
