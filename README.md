@@ -18,17 +18,23 @@ The script handles everything: building images, waiting for the database, and ru
 ---
 
 ## Offline deployment
- 
-On a machine with internet access, build and package everything into a single bundle:
- 
+
+Two export modes are available. Both produce a single `netline.tar.gz` containing the full project and Docker images.
+
+**Clean slate** — no data, fresh database on first run:
+
 ```bash
 ./start.sh --export
 ```
- 
-This creates `netline.tar.gz` in the project directory — it contains the full project and both Docker images.
- 
-Copy that single file to the target machine, then:
- 
+
+**With database** — includes a snapshot of the current database:
+
+```bash
+./start.sh --export-with-db
+```
+
+Copy `netline.tar.gz` to the target machine, then:
+
 ```bash
 tar -xzf netline.tar.gz
 cd netline && ./start.sh

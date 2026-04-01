@@ -41,13 +41,19 @@ PORT_VAL=${PORT_VAL:-3000}
 
 # ── Reset DB prompt ───────────────────────────────────────────────────────────
 RESET_DB=false
-echo ""
-read -p "Reset database? All data will be lost. (y/N): " RESET_ANSWER
-if [[ "$RESET_ANSWER" =~ ^[Yy]$ ]]; then
+if [ -f netline-app.tar.gz ] && [ -f netline-mysql.tar.gz ]; then
+    # Offline bundle detected — always wipe the volume so no stale data leaks in
     RESET_DB=true
-    echo -e "${YELLOW}Database will be reset.${NC}"
+    echo -e "${YELLOW}Offline bundle detected — wiping any existing database volume.${NC}"
 else
-    echo -e "${GREEN}Keeping existing data.${NC}"
+    echo ""
+    read -p "Reset database? All data will be lost. (y/N): " RESET_ANSWER
+    if [[ "$RESET_ANSWER" =~ ^[Yy]$ ]]; then
+        RESET_DB=true
+        echo -e "${YELLOW}Database will be reset.${NC}"
+    else
+        echo -e "${GREEN}Keeping existing data.${NC}"
+    fi
 fi
 
 # ── Wipe DB if requested ──────────────────────────────────────────────────────
@@ -57,17 +63,25 @@ if [ "$RESET_DB" = true ]; then
 fi
 
 # ── Load offline images if present ───────────────────────────────────────────
+OFFLINE=false
 if [ -f netline-app.tar.gz ] && [ -f netline-mysql.tar.gz ]; then
+    OFFLINE=true
     echo -e "${YELLOW}Offline images found — loading...${NC}"
     docker load < netline-app.tar.gz
     docker load < netline-mysql.tar.gz
+    rm netline-app.tar.gz netline-mysql.tar.gz
     echo -e "${GREEN}✓ Images loaded${NC}"
 fi
 
 # ── Build and start ───────────────────────────────────────────────────────────
 echo ""
-echo -e "${YELLOW}Building and starting containers...${NC}"
-docker compose up --build -d
+echo -e "${YELLOW}Starting containers...${NC}"
+if [ "$OFFLINE" = true ]; then
+    # Skip --build entirely — images are already loaded, no internet needed
+    docker compose up -d
+else
+    docker compose up --build -d
+fi
 
 # ── Wait for database ─────────────────────────────────────────────────────────
 echo -e "${YELLOW}Waiting for database...${NC}"
@@ -81,27 +95,52 @@ echo -e "${GREEN}✓ Database ready${NC}"
 
 # ── Migrations ────────────────────────────────────────────────────────────────
 echo -e "${YELLOW}Running migrations...${NC}"
-if [ ! -d "prisma/migrations" ] || [ -z "$(ls -A prisma/migrations 2>/dev/null)" ]; then
-    # No migration files yet — generate them directly from the schema using db push,
-    # then create a baseline migration so deploy works from now on
-    docker compose exec -T app npx prisma db push --skip-generate
-    echo -e "${GREEN}  Schema pushed — creating baseline migration...${NC}"
-    docker compose exec -T app npx prisma migrate resolve --applied 0_init 2>/dev/null || true
+if [ "$OFFLINE" = true ]; then
+    # Offline bundle: schema was applied during image build — nothing to do
+    echo -e "${GREEN}✓ Schema ready (offline bundle)${NC}"
 else
-    docker compose exec -T app npx prisma migrate deploy
+    if [ ! -d "prisma/migrations" ] || [ -z "$(ls -A prisma/migrations 2>/dev/null)" ]; then
+        docker compose exec -T app npx prisma db push --skip-generate
+        echo -e "${GREEN}  Schema pushed — creating baseline migration...${NC}"
+        docker compose exec -T app npx prisma migrate resolve --applied 0_init 2>/dev/null || true
+    else
+        docker compose exec -T app npx prisma migrate deploy
+    fi
+    echo -e "${GREEN}✓ Schema applied${NC}"
+
+    # Restart to pick up any migration changes
+    docker compose restart app
 fi
-echo -e "${GREEN}✓ Database ready${NC}"
 
-# ── Restart app to pick up migrations ────────────────────────────────────────
-docker compose restart app
+# ── Restore database dump if present (from --export-with-db bundle) ──────────
+if [ -f netline-dump.sql ]; then
+    echo -e "${YELLOW}Database snapshot found — restoring...${NC}"
+    docker compose exec -T db mysql         -u netline --password="$MYSQL_PASSWORD_VAL" netline         < netline-dump.sql
+    rm netline-dump.sql
+    echo -e "${GREEN}✓ Database restored${NC}"
+fi
 
-# ── Export bundle for offline use (only if --export-images flag given) ───────
-if [[ " $* " == *" --export "* ]]; then
+# ── Export bundle ─────────────────────────────────────────────────────────────
+# --export        clean slate (Docker images only, no database data)
+# --export-with-db  includes a dump of the current database
+
+EXPORT_MODE=""
+if [[ " $* " == *" --export-with-db "* ]]; then
+    EXPORT_MODE="with-db"
+elif [[ " $* " == *" --export "* ]]; then
+    EXPORT_MODE="clean"
+fi
+
+if [ -n "$EXPORT_MODE" ]; then
     echo ""
-    echo -e "${YELLOW}Building offline deployment bundle...${NC}"
-
-    BUNDLE_DIR=$(mktemp -d)
     REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    BUNDLE_DIR=$(mktemp -d)
+
+    if [ "$EXPORT_MODE" = "with-db" ]; then
+        echo -e "${YELLOW}Building offline bundle with database snapshot...${NC}"
+    else
+        echo -e "${YELLOW}Building clean offline bundle...${NC}"
+    fi
 
     # Save Docker images
     echo -e "${YELLOW}  Saving Docker images...${NC}"
@@ -110,7 +149,7 @@ if [[ " $* " == *" --export "* ]]; then
     docker save netline:latest | gzip > "$BUNDLE_DIR/netline-app.tar.gz"
     docker save mysql:8.0      | gzip > "$BUNDLE_DIR/netline-mysql.tar.gz"
 
-    # Copy project files (exclude node_modules, .git, and any existing bundle)
+    # Copy project files (exclude node_modules, .git, and any existing bundles)
     echo -e "${YELLOW}  Copying project files...${NC}"
     mkdir -p "$BUNDLE_DIR/netline"
     tar -cf - -C "$REPO_DIR" \
@@ -121,9 +160,16 @@ if [[ " $* " == *" --export "* ]]; then
         --exclude='./netline-mysql.tar.gz' \
         . | tar -xf - -C "$BUNDLE_DIR/netline"
 
-    # Move images inside the project folder so start.sh finds them automatically
+    # Move images inside the project folder so start.sh auto-loads them
     mv "$BUNDLE_DIR/netline-app.tar.gz"   "$BUNDLE_DIR/netline/"
     mv "$BUNDLE_DIR/netline-mysql.tar.gz" "$BUNDLE_DIR/netline/"
+
+    # Dump database if requested
+    if [ "$EXPORT_MODE" = "with-db" ]; then
+        echo -e "${YELLOW}  Dumping database...${NC}"
+        docker compose exec -T db mysqldump             -u netline --password="$MYSQL_PASSWORD_VAL"             --single-transaction --quick netline             > "$BUNDLE_DIR/netline/netline-dump.sql"
+        echo -e "${GREEN}  ✓ Database snapshot included${NC}"
+    fi
 
     # Pack everything into a single archive
     tar -czf "$REPO_DIR/netline.tar.gz" -C "$BUNDLE_DIR" netline

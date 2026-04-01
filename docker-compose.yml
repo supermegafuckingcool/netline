@@ -19,11 +19,14 @@ services:
 
   app:
     build: .
+    image: netline:latest
     restart: unless-stopped
     ports:
       - "${PORT:-3000}:3000"
+      # Port 5555 (Prisma Studio) is intentionally not exposed publicly.
+      # Access via SSH tunnel: ssh -L 5555:localhost:5555 user@server
+      # Then run: docker compose exec app npx prisma studio
     environment:
-      # Root user so Prisma can create the shadow database during migrations
       DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD:-rootpassword}@db:3306/netline
       PORT: 3000
     depends_on:
