@@ -53,10 +53,9 @@ async function buildGraph() {
 
 // Resolve a connection ref (IP or node ID) to a node ID
 async function resolveRef(ref) {
-    // Try IP match
     const byIp = await prisma.nodeIp.findFirst({ where: { address: ref } });
     if (byIp) return byIp.nodeId;
-    // Try ID match
+
     const byId = await prisma.node.findUnique({ where: { id: ref } });
     if (byId) return byId.id;
     return ref;
@@ -64,24 +63,41 @@ async function resolveRef(ref) {
 
 // ── Request handler ───────────────────────────────────────────────────────────
 
+const MAX_BODY = 2 * 1024 * 1024; // 2 MB
+
 function readBody(req) {
     return new Promise((resolve, reject) => {
         let body = "";
-        req.on("data", chunk => body += chunk);
+        let size = 0;
+        req.on("data", chunk => {
+            size += chunk.length;
+            if (size > MAX_BODY) {
+                req.destroy();
+                return reject(new Error("Request body too large"));
+            }
+            body += chunk;
+        });
         req.on("end",  () => { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
         req.on("error", reject);
     });
 }
 
+const SECURITY_HEADERS = {
+    "X-Content-Type-Options":  "nosniff",
+    "X-Frame-Options":         "DENY",
+    "Referrer-Policy":         "no-referrer",
+    "Cache-Control":           "no-store",
+};
+
 function json(res, status, data) {
-    res.writeHead(status, { "Content-Type": "application/json" });
+    res.writeHead(status, { "Content-Type": "application/json", ...SECURITY_HEADERS });
     res.end(JSON.stringify(data));
 }
 
 http.createServer(async (req, res) => {
     try {
         // ── GET /graph ──────────────────────────────────────────────────────
-        // Serves the full graph as JSON (replaces the static graph.json file)
+        // Serves the full graph as JSON
         if (req.method === "GET" && req.url.startsWith("/graph")) {
             const graph = await buildGraph();
             return json(res, 200, graph);
@@ -103,6 +119,9 @@ http.createServer(async (req, res) => {
             }
 
             const ips = Array.isArray(newNode.ips) ? newNode.ips : [];
+            const VALID_TYPES = ["fw", "client", "server"];
+            if (!VALID_TYPES.includes(newNode.type)) return json(res, 400, { error: "Invalid node type." });
+            if (!newNode.hostname || !newNode.system) return json(res, 400, { error: "hostname and system are required." });
 
             await prisma.$transaction(async tx => {
                 await tx.node.create({
@@ -115,7 +134,6 @@ http.createServer(async (req, res) => {
                     }
                 });
                 for (const target of connections) {
-                    // Only create link if target exists
                     const targetExists = await tx.node.findUnique({ where: { id: target } });
                     if (targetExists) {
                         await tx.link.upsert({
@@ -148,7 +166,7 @@ http.createServer(async (req, res) => {
 
             const ips = Array.isArray(node.ips) ? node.ips : [];
 
-            // ID is derived from system + hostname — update it if either changed
+            // Update ID if hostname or system changed
             const newId = `${node.system}-${node.hostname}`;
             node.id = newId;
 
@@ -175,6 +193,11 @@ http.createServer(async (req, res) => {
                     });
                     // Move note to new ID
                     await tx.note.updateMany({
+                        where: { nodeId: originalId },
+                        data:  { nodeId: newId },
+                    });
+                    // Move events to new ID
+                    await tx.event.updateMany({
                         where: { nodeId: originalId },
                         data:  { nodeId: newId },
                     });
@@ -343,6 +366,12 @@ http.createServer(async (req, res) => {
         // ── POST /add-event ─────────────────────────────────────────────────
         if (req.method === "POST" && req.url === "/add-event") {
             const body = await readBody(req);
+            const nodeExists = await prisma.node.findUnique({ where: { id: body.nodeId } });
+            if (!nodeExists) return json(res, 400, { error: `Node "${body.nodeId}" not found.` });
+            const VALID_ACTORS    = ["blue", "red"];
+            const VALID_SEVERITIES = ["none", "low", "medium", "high", "critical"];
+            if (body.actor && !VALID_ACTORS.includes(body.actor)) return json(res, 400, { error: "Invalid actor." });
+            if (body.severity && !VALID_SEVERITIES.includes(body.severity)) return json(res, 400, { error: "Invalid severity." });
             const event = await prisma.event.create({
                 data: {
                     nodeId:      body.nodeId,
@@ -366,8 +395,10 @@ http.createServer(async (req, res) => {
         // ── POST /edit-event ────────────────────────────────────────────────
         if (req.method === "POST" && req.url === "/edit-event") {
             const body = await readBody(req);
+            const eventId = parseInt(body.id);
+            if (isNaN(eventId)) return json(res, 400, { error: "Invalid event id" });
             const event = await prisma.event.update({
-                where: { id: parseInt(body.id) },
+                where: { id: eventId },
                 data: {
                     datetime:    new Date(body.datetime),
                     description: body.description || "",
@@ -388,14 +419,24 @@ http.createServer(async (req, res) => {
         // ── POST /delete-event ──────────────────────────────────────────────
         if (req.method === "POST" && req.url === "/delete-event") {
             const { id } = await readBody(req);
-            await prisma.event.delete({ where: { id: parseInt(id) } });
+            const eventId = parseInt(id);
+            if (isNaN(eventId)) return json(res, 400, { error: "Invalid event id" });
+            await prisma.event.delete({ where: { id: eventId } });
             return json(res, 200, { ok: true });
         }
 
         // ── Static file serving ─────────────────────────────────────────────
-        let filePath = "./public" + req.url;
-        filePath = filePath.split("?")[0];
-        if (filePath === "./public/" || filePath === "./public") filePath = "./public/index.html";
+        const publicRoot = path.resolve("./public");
+        let rawPath = req.url.split("?")[0];
+        if (rawPath === "/" || rawPath === "") rawPath = "/index.html";
+        const filePath = path.resolve(publicRoot, "." + rawPath);
+
+        // Prevent path traversal  
+        // reject anything outside ./public
+        if (!filePath.startsWith(publicRoot + path.sep) && filePath !== publicRoot) {
+            res.writeHead(403, { "Content-Type": "text/plain" });
+            return res.end("403 - Forbidden");
+        }
 
         const extname     = String(path.extname(filePath)).toLowerCase();
         const contentType = mimeTypes[extname] || "application/octet-stream";
@@ -405,16 +446,28 @@ http.createServer(async (req, res) => {
                 res.writeHead(404, { "Content-Type": "text/plain" });
                 res.end("404 - File not found");
             } else {
-                res.writeHead(200, { "Content-Type": contentType });
+                res.writeHead(200, { "Content-Type": contentType, ...SECURITY_HEADERS });
                 res.end(content, "utf-8");
             }
         });
 
     } catch (e) {
         console.error("Unhandled error:", e);
-        json(res, 500, { error: "Internal server error", detail: e.message });
+        json(res, 500, { error: "Internal server error" });
     }
 
 }).listen(PORT, () => {
     console.log(`Netline running at http://localhost:${PORT}`);
+});
+
+// Clean shutdown
+async function shutdown() {
+    await prisma.$disconnect();
+    process.exit(0);
+}
+process.on("SIGINT",  shutdown);
+process.on("SIGTERM", shutdown);
+process.on("uncaughtException", (e) => {
+    console.error("Uncaught exception:", e);
+    shutdown();
 });

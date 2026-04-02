@@ -6,8 +6,11 @@ const FONT_SIZE          = 12;  // node label font size (px)
 const LINK_DISTANCE_SAME = 200; // distance between nodes in the same system
 const LINK_DISTANCE_DIFF = 320; // distance between nodes in different systems
 const LINK_STRENGTH      = -30; // node repulsion (more negative = further apart)
-const DOT_GRID_SIZE      = 45;  // background dot grid spacing (px)
+const DOT_GRID_SIZE      = 30;  // background dot grid spacing (px)
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Escape HTML to prevent XSS when injecting into innerHTML
+function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
 // Resolve D3 link endpoint to string ID
 function resolveId(x) { return typeof x === "object" ? x.id : x; }
@@ -26,15 +29,27 @@ const SEVERITY_COLORS = {
 
 window.allEvents    = [];   // all events loaded from server
 
-// Format datetime as YYYY-MM-DD HH:MM (24h) in selected timezone
+// Format datetime as YYYY-MM-DD HH:MM:SS (24h) in selected timezone
 function fmtTime(d) {
     if (!(d instanceof Date)) d = new Date(d);
     const tz = window.selectedTimezone || "Europe/Paris";
+    const p  = n => String(n).padStart(2, "0");
     try {
-        return d.toLocaleString("sv-SE", { timeZone: tz }).slice(0, 16).replace("T", " ");
+        // Use Intl.DateTimeFormat for locale-independent 24h formatting
+        const parts = new Intl.DateTimeFormat("en-CA", {
+            timeZone:  tz,
+            year:      "numeric",
+            month:     "2-digit",
+            day:       "2-digit",
+            hour:      "2-digit",
+            minute:    "2-digit",
+            second:    "2-digit",
+            hour12:    false,
+        }).formatToParts(d);
+        const get = type => parts.find(pt => pt.type === type)?.value || "00";
+        return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
     } catch(e) {
-        const p = n => String(n).padStart(2, "0");
-        return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());
+        return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());
     }
 }
 window.currentTime  = null; // current slider datetime (ms)
@@ -254,13 +269,13 @@ function drawGraph(data) {
             if (isDragging) return;
             // Support both new ips array and legacy ip string
             const ipLines = Array.isArray(d.ips) && d.ips.length
-                ? d.ips.map(i => `<span style="color:#888;margin-right:4px">IP</span>${i.address}${i.subnet || ''}`).join("<br>")
-                : `<span style="color:#888;margin-right:4px">IP</span>${d.ip || ""}${d.subnet || ""}`;
+                ? d.ips.map(i => `<span style="color:#888;margin-right:4px">IP</span>${esc(i.address)}${esc(i.subnet || '')}`).join("<br>")
+                : `<span style="color:#888;margin-right:4px">IP</span>${esc(d.ip || "")}${esc(d.subnet || "")}`;
             tooltip
                 .style("display", "block")
                 .html(
-                    `<span style="color:#888;margin-right:4px">System</span>${d.system}<br>` +
-                    `<span style="color:#888;margin-right:4px">ID</span>${d.id}<br>` +
+                    `<span style="color:#888;margin-right:4px">System</span>${esc(d.system)}<br>` +
+                    `<span style="color:#888;margin-right:4px">ID</span>${esc(d.id)}<br>` +
                     ipLines
                 );
             positionTooltip(d);
@@ -503,18 +518,18 @@ function updateEventCards() {
         card.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
                 <div style="display:flex;align-items:center;gap:6px;">
-                    <span style="color:${color};font-weight:bold;font-size:10px;">${e.actor.toUpperCase()}</span>
-                    ${e.severity !== "none" ? `<span style="background:${sev};color:#111;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:bold;">${e.severity.toUpperCase()}</span>` : ""}
+                    <span style="color:${color};font-weight:bold;font-size:10px;">${esc(e.actor).toUpperCase()}</span>
+                    ${e.severity !== "none" ? `<span style="background:${sev};color:#111;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:bold;">${esc(e.severity).toUpperCase()}</span>` : ""}
                 </div>
                 <button class="event-card-close" style="background:none;border:none;color:#888;cursor:pointer;font-size:13px;padding:0 2px;line-height:1;" title="Close">✕</button>
             </div>
-            <div style="color:#aaa;font-size:10px;margin-bottom:3px;">${time}</div>
-            <div>${e.description}</div>
-            ${e.mitre ? `<div style="color:#aaa;font-size:10px;margin-top:2px;">MITRE: ${e.mitre}</div>` : ""}
-            ${e.tool  ? `<div style="color:#aaa;font-size:10px;">Tool: ${e.tool}</div>` : ""}
-            ${e.cve   ? `<div style="color:#aaa;font-size:10px;">CVE: ${e.cve}</div>` : ""}
-            ${e.srcIp ? `<div style="color:#aaa;font-size:10px;">Src: ${e.srcIp}</div>` : ""}
-            ${e.dstIp ? `<div style="color:#aaa;font-size:10px;">Dst: ${e.dstIp}</div>` : ""}
+            <div style="color:#aaa;font-size:10px;margin-bottom:3px;">${esc(time)}</div>
+            <div>${esc(e.description)}</div>
+            ${e.mitre ? `<div style="color:#aaa;font-size:10px;margin-top:2px;">MITRE: ${esc(e.mitre)}</div>` : ""}
+            ${e.tool  ? `<div style="color:#aaa;font-size:10px;">Tool: ${esc(e.tool)}</div>` : ""}
+            ${e.cve   ? `<div style="color:#aaa;font-size:10px;">CVE: ${esc(e.cve)}</div>` : ""}
+            ${e.srcIp ? `<div style="color:#aaa;font-size:10px;">Src: ${esc(e.srcIp)}</div>` : ""}
+            ${e.dstIp ? `<div style="color:#aaa;font-size:10px;">Dst: ${esc(e.dstIp)}</div>` : ""}
         `;
         card.querySelector(".event-card-close").addEventListener("click", () => {
             window._dismissedCards.add(nodeId);
@@ -568,12 +583,12 @@ function updateEventFeed() {
         `;
         item.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
-                <span style="color:#ccc;font-size:11px;font-weight:bold;">${label}</span>
-                ${e.severity !== "none" ? `<span style="background:${sev};color:#111;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:bold;">${e.severity.toUpperCase()}</span>` : ""}
+                <span style="color:#ccc;font-size:11px;font-weight:bold;">${esc(label)}</span>
+                ${e.severity !== "none" ? `<span style="background:${sev};color:#111;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:bold;">${esc(e.severity).toUpperCase()}</span>` : ""}
             </div>
-            <div style="color:#888;font-size:10px;margin-bottom:3px;">${time} · <span style="color:${color}">${e.actor.toUpperCase()}</span></div>
-            <div style="color:#ddd;font-size:11px;">${e.description}</div>
-            ${e.mitre ? `<div style="color:#888;font-size:10px;margin-top:2px;">MITRE: ${e.mitre}</div>` : ""}
+            <div style="color:#888;font-size:10px;margin-bottom:3px;">${esc(time)} · <span style="color:${color}">${esc(e.actor).toUpperCase()}</span></div>
+            <div style="color:#ddd;font-size:11px;">${esc(e.description)}</div>
+            ${e.mitre ? `<div style="color:#888;font-size:10px;margin-top:2px;">MITRE: ${esc(e.mitre)}</div>` : ""}
         `;
         item.addEventListener("click", () => {
             if (typeof window.selectNode === "function") window.selectNode(e.nodeId);

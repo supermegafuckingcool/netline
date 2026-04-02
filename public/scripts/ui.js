@@ -4,7 +4,7 @@ function fmtDatetime(d) {
     if (!(d instanceof Date)) d = new Date(d);
     if (typeof fmtTime === "function") return fmtTime(d);
     const p = n => String(n).padStart(2, "0");
-    return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());
+    return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());
 }
 const sidebar      = document.getElementById("sidebar");
 const toggleBtn    = document.getElementById("sidebar-toggle-btn");
@@ -255,7 +255,7 @@ tabs.forEach(tab => {
                     <label>Date &amp; Time</label>
                     <div style="display:flex;gap:6px;">
                         <input id="ev-date" type="date" style="flex:1;padding:7px 10px;border:1.5px solid #ccc;border-radius:6px;font-size:13px;font-family:Arial,sans-serif;outline:none;" />
-                        <input id="ev-time" type="text" placeholder="HH:MM" maxlength="5" pattern="[0-9]{2}:[0-9]{2}" style="width:75px;padding:7px 10px;border:1.5px solid #ccc;border-radius:6px;font-size:13px;font-family:Arial,sans-serif;outline:none;" />
+                        <input id="ev-time" type="text" placeholder="HH:MM:SS" maxlength="8" pattern="[0-9]{2}:[0-9]{2}:[0-9]{2}" style="width:90px;padding:7px 10px;border:1.5px solid #ccc;border-radius:6px;font-size:13px;font-family:Arial,sans-serif;outline:none;" />
                     </div>
                     <input id="ev-datetime" type="hidden" />
                 </div>
@@ -898,20 +898,20 @@ function renderNodeEvents(nodeId, container) {
         item.style.cssText = `border-left:3px solid ${color};padding:8px 10px;margin-bottom:6px;background:#f0eeee;border-radius:0 6px 6px 0;cursor:pointer;`;
         item.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
-                <span style="color:${color};font-size:11px;font-weight:bold;">${e.actor.toUpperCase()}</span>
+                <span style="color:${color};font-size:11px;font-weight:bold;">${escHtml(e.actor).toUpperCase()}</span>
                 <div style="display:flex;gap:6px;align-items:center;">
-                    ${e.severity !== "none" ? `<span style="background:${sev};color:#111;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:bold;">${e.severity.toUpperCase()}</span>` : ""}
+                    ${e.severity !== "none" ? `<span style="background:${sev};color:#111;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:bold;">${escHtml(e.severity).toUpperCase()}</span>` : ""}
                     <button data-edit="${e.id}" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:11px;padding:0 2px;" title="Edit">✎</button>
                     <button data-evid="${e.id}" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:12px;padding:0 2px;" title="Delete">✕</button>
                 </div>
             </div>
-            <div style="color:#888;font-size:10px;margin-bottom:3px;">${time}</div>
-            <div style="font-size:12px;font-weight:normal;color:#333;">${e.description}</div>
-            ${e.mitre ? `<div style="color:#888;font-size:10px;margin-top:2px;">MITRE: ${e.mitre}</div>` : ""}
-            ${e.tool  ? `<div style="color:#888;font-size:10px;">Tool: ${e.tool}</div>` : ""}
-            ${e.cve   ? `<div style="color:#888;font-size:10px;">CVE: ${e.cve}</div>` : ""}
-            ${e.srcIp ? `<div style="color:#888;font-size:10px;">Src: ${e.srcIp}</div>` : ""}
-            ${e.dstIp ? `<div style="color:#888;font-size:10px;">Dst: ${e.dstIp}</div>` : ""}
+            <div style="color:#888;font-size:10px;margin-bottom:3px;">${escHtml(time)}</div>
+            <div style="font-size:12px;font-weight:normal;color:#333;">${escHtml(e.description)}</div>
+            ${e.mitre ? `<div style="color:#888;font-size:10px;margin-top:2px;">MITRE: ${escHtml(e.mitre)}</div>` : ""}
+            ${e.tool  ? `<div style="color:#888;font-size:10px;">Tool: ${escHtml(e.tool)}</div>` : ""}
+            ${e.cve   ? `<div style="color:#888;font-size:10px;">CVE: ${escHtml(e.cve)}</div>` : ""}
+            ${e.srcIp ? `<div style="color:#888;font-size:10px;">Src: ${escHtml(e.srcIp)}</div>` : ""}
+            ${e.dstIp ? `<div style="color:#888;font-size:10px;">Dst: ${escHtml(e.dstIp)}</div>` : ""}
         `;
 
         // Click item body — seek timeline to this event and show card
@@ -938,7 +938,7 @@ function renderNodeEvents(nodeId, container) {
             const dt = new Date(e.datetime);
             const pad = n => String(n).padStart(2, "0");
             document.getElementById("ev-date").value = `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
-            document.getElementById("ev-time").value = `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+            document.getElementById("ev-time").value = `${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
             document.getElementById("ev-description").value = e.description || "";
             document.getElementById("ev-actor").value    = e.actor || "blue";
             document.getElementById("ev-severity").value = e.severity || "none";
@@ -1119,11 +1119,12 @@ window.selectNode = function(id) {
     document.getElementById("ev-date").value =
         `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
     const evTimeEl = document.getElementById("ev-time");
-    evTimeEl.value = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-    // Auto-insert colon after two digits
+    evTimeEl.value = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    // Auto-insert colons: 14 → 14: → 14:30 → 14:30: → 14:30:00
     evTimeEl.addEventListener("input", function() {
         let v = this.value.replace(/[^0-9]/g, "");
-        if (v.length >= 3) v = v.slice(0,2) + ":" + v.slice(2,4);
+        if (v.length >= 5) v = v.slice(0,2) + ":" + v.slice(2,4) + ":" + v.slice(4,6);
+        else if (v.length >= 3) v = v.slice(0,2) + ":" + v.slice(2,4);
         this.value = v;
     });
 
@@ -1160,7 +1161,7 @@ window.selectNode = function(id) {
     evSave.parentNode.replaceChild(newEvSave, evSave);
     newEvSave.addEventListener("click", () => {
         const evDate      = document.getElementById("ev-date").value;
-        const evTime      = document.getElementById("ev-time").value || "00:00";
+        const evTime      = document.getElementById("ev-time").value || "00:00:00";
         const datetime    = evDate ? `${evDate}T${evTime}` : "";
         const description = document.getElementById("ev-description").value.trim();
         const actor       = document.getElementById("ev-actor").value;
