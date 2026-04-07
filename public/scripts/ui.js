@@ -1416,7 +1416,8 @@ function openSidebar() {
     sidebarOpen = true;
     sidebar.classList.add("open");
     chevron.style.transform = "scaleX(1)";
-    positionTimeline();
+    // Sidebar CSS transition is 250ms — poll until width is stable
+    _trackSidebarTransition();
 }
 
 function closeSidebar() {
@@ -1424,7 +1425,19 @@ function closeSidebar() {
     sidebar.classList.remove("open");
     sidebar.style.width = ""; // clear any inline width from resizing
     chevron.style.transform = "scaleX(-1)";
-    positionTimeline();
+    _trackSidebarTransition();
+}
+
+function _trackSidebarTransition() {
+    // Read sidebar width on every animation frame for the duration of the transition
+    const duration = 270; // slightly longer than the 250ms CSS transition
+    const start    = performance.now();
+    function tick(now) {
+        positionTimeline();
+        if (now - start < duration) requestAnimationFrame(tick);
+        else positionTimeline(); // final authoritative read
+    }
+    requestAnimationFrame(tick);
 }
 
 toggleBtn.addEventListener("click", () => {
