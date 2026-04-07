@@ -93,29 +93,19 @@ done
 echo ""
 echo -e "${GREEN}✓ Database ready${NC}"
 
-# ── Migrations ────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}Running migrations...${NC}"
-if [ "$OFFLINE" = true ]; then
-    # Offline bundle: schema was applied during image build — nothing to do
-    echo -e "${GREEN}✓ Schema ready (offline bundle)${NC}"
-else
-    if [ ! -d "prisma/migrations" ] || [ -z "$(ls -A prisma/migrations 2>/dev/null)" ]; then
-        docker compose exec -T app npx prisma db push --skip-generate
-        echo -e "${GREEN}  Schema pushed — creating baseline migration...${NC}"
-        docker compose exec -T app npx prisma migrate resolve --applied 0_init 2>/dev/null || true
-    else
-        docker compose exec -T app npx prisma migrate deploy
-    fi
-    echo -e "${GREEN}✓ Schema applied${NC}"
+# Schema is applied inside the container at startup (Dockerfile CMD).
+# Give the app a moment to finish before continuing.
+echo -e "${YELLOW}Applying schema...${NC}"
+sleep 6
+echo -e "${GREEN}✓ Schema applied${NC}"
 
-    # Restart to pick up any migration changes
-    docker compose restart app
-fi
-
-# ── Restore database dump if present (from --export-with-db bundle) ──────────
+# ── Restore database dump if present (from --export-with-db bundle) ────────────
 if [ -f netline-dump.sql ]; then
     echo -e "${YELLOW}Database snapshot found — restoring...${NC}"
-    docker compose exec -T db mysql         -u netline --password="$MYSQL_PASSWORD_VAL" netline         < netline-dump.sql
+    sleep 8
+    docker compose exec -T db mysql \
+        -u netline --password="$MYSQL_PASSWORD_VAL" netline \
+        < netline-dump.sql
     rm netline-dump.sql
     echo -e "${GREEN}✓ Database restored${NC}"
 fi

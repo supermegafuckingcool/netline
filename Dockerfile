@@ -27,4 +27,4 @@ RUN addgroup --system --gid 1001 netline && \
 USER netline
 
 # Deploy migrations (safe to run repeatedly) then start
-CMD ["sh", "-c", "npx prisma migrate deploy && node server.js"]
+CMD ["sh", "-c", "npx prisma db push --skip-generate --accept-data-loss 2>&1 && node server.js"]

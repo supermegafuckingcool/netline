@@ -2,11 +2,11 @@
 
 // ── Visual constants — tweak these to adjust the graph appearance ─────────────
 const NODE_SIZE          = 0;   // added to all node radii
-const FONT_SIZE          = 12;  // node label font size (px)
-const LINK_DISTANCE_SAME = 200; // distance between nodes in the same system
-const LINK_DISTANCE_DIFF = 320; // distance between nodes in different systems
+const FONT_SIZE          = 13;  // node label font size (px)
+const LINK_DISTANCE_SAME = 120; // distance between nodes in the same system
+const LINK_DISTANCE_DIFF = 300; // distance between nodes in different systems
 const LINK_STRENGTH      = -30; // node repulsion (more negative = further apart)
-const DOT_GRID_SIZE      = 30;  // background dot grid spacing (px)
+const DOT_GRID_SIZE      = 45;  // background dot grid spacing (px)
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Escape HTML to prevent XSS when injecting into innerHTML
@@ -15,10 +15,34 @@ function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").re
 // Resolve D3 link endpoint to string ID
 function resolveId(x) { return typeof x === "object" ? x.id : x; }
 
+// Node radius — module-scoped so updateEventCards can use it
+function nodeRadiusFor(type) {
+    if (type === "fw")          return 60 + NODE_SIZE;
+    if (type === "router")      return 54 + NODE_SIZE;
+    if (type === "switch")      return 50 + NODE_SIZE;
+    if (type === "server")      return 48 + NODE_SIZE;
+    if (type === "workstation") return 44 + NODE_SIZE;
+    if (type === "client")      return 42 + NODE_SIZE;
+    if (type === "iot")         return 38 + NODE_SIZE;
+    return 40 + NODE_SIZE;
+}
+
 // ── Event / Timeline state ────────────────────────────────────────────────────
 const ACTOR_BLUE   = "#5153B4";
 const ACTOR_RED    = "#B45153";
-const NODE_COLOR   = { fw: "#de8691", client: "#86dea8", server: "#86bcde" };
+const ACTOR_GREY   = "#888888";
+const ACTOR_COLOR  = { blue: ACTOR_BLUE, red: ACTOR_RED, grey: ACTOR_GREY };
+
+const NODE_COLOR = {
+    fw:          "#f4a8b4",   // pastel rose      — firewall
+    router:      "#c8a8f4",   // pastel purple    — router
+    switch:      "#a8c8f4",   // pastel blue      — switch
+    server:      "#a8d8f4",   // pastel sky       — server
+    workstation: "#a8f4c8",   // pastel mint      — workstation
+    client:      "#c4f4a8",   // pastel lime      — client
+    iot:         "#f4e8a8",   // pastel yellow    — IoT device
+    unknown:     "#c8c8d4",   // pastel grey      — unknown
+};
 const SEVERITY_COLORS = {
     none:     "#666",
     low:      "#6fcf97",
@@ -28,6 +52,7 @@ const SEVERITY_COLORS = {
 };
 
 window.allEvents    = [];   // all events loaded from server
+window.currentGraphId = null; // active graph id
 
 // Format datetime as YYYY-MM-DD HH:MM:SS (24h) in selected timezone
 function fmtTime(d) {
@@ -54,41 +79,81 @@ function fmtTime(d) {
 }
 window.currentTime  = null; // current slider datetime (ms)
 window.activeEvents = [];   // events up to currentTime
-// Load graph — fall back to empty graph if file doesn't exist
-fetch("/graph")
-    .then(r => r.ok ? r.json() : { nodes: [], links: [] })
-    .catch(() => ({ nodes: [], links: [] }))
-    .then(function(data) {
-        window.currentGraphData = data;
-
-        // Load events then init timeline
-        fetch("/events")
-            .then(r => r.ok ? r.json() : [])
-            .catch(() => [])
-            .then(events => {
-                window.allEvents = events;
-                initTimeline();
-                drawGraph(data);
-
-                // Wire up sidebar panels
-                if (typeof wireNodeList   === "function") wireNodeList();
-                if (typeof wireJsonEditor === "function") wireJsonEditor();
-
-                // Redraw whenever canvas is resized (e.g. devtools open/close)
-                const canvasEl = document.getElementById("canvas");
-                new ResizeObserver(() => {
-                    d3.select("#canvas svg")
-                        .attr("width",  canvasEl.clientWidth)
-                        .attr("height", canvasEl.clientHeight);
-                    if (window.graphSimulation) {
-                        window.graphSimulation
-                            .force("center", d3.forceCenter(canvasEl.clientWidth / 2, canvasEl.clientHeight / 2))
-                            .alpha(0.1)
-                            .restart();
-                    }
-                }).observe(canvasEl);
+// Load all graphs, then load the first one
+fetch("/graphs")
+    .then(r => r.ok ? r.json() : [])
+    .catch(() => [])
+    .then(graphs => {
+        if (graphs.length === 0) {
+            // First run — create Default graph
+            return fetch("/create-graph", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: "Default" })
+            }).then(r => r.json()).then(res => {
+                window._allGraphs = [res.graph];
+                return res.graph.id;
             });
+        }
+        window._allGraphs = graphs;
+        return graphs[0].id;
+    })
+    .then(graphId => loadGraph(graphId));
+
+function loadGraph(graphId) {
+    window.currentGraphId       = graphId;
+    window._eventCardsEnabled   = false;
+    window._dismissedCards      = new Set();
+    window.currentTime          = null;
+    window.activeEvents         = [];
+    if (typeof window.refreshGraphSwitcher === "function") window.refreshGraphSwitcher();
+
+    const canvasEl = document.getElementById("canvas");
+
+    Promise.all([
+        fetch("/graph?graphId=" + graphId).then(r => r.ok ? r.json() : { nodes: [], links: [] }).catch(() => ({ nodes: [], links: [] })),
+        fetch("/events?graphId=" + graphId).then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch("/notes?graphId=" + graphId).then(r => r.ok ? r.json() : {}).catch(() => ({})),
+    ]).then(([data, events, notes]) => {
+        window.currentGraphData = data;
+        window.allEvents        = events;
+        window.nodeNotes        = notes;
+
+        initTimeline();
+
+        d3.select("#canvas svg").remove();
+        d3.select("#canvas #node-tooltip").remove();
+        drawGraph(data);
+
+        if (typeof wireNodeList   === "function") wireNodeList();
+        // wireJsonEditor accumulates listeners — only call once, then just reload content
+        if (typeof wireJsonEditor === "function") {
+            if (!window._jsonEditorWired) {
+                window._jsonEditorWired = true;
+                wireJsonEditor();
+            } else if (typeof window.reloadJsonEditor === "function") {
+                window.reloadJsonEditor();
+            }
+        }
+        if (typeof updateEventFeed === "function") updateEventFeed();
+
+        if (!window._resizeObserverAdded) {
+            window._resizeObserverAdded = true;
+            new ResizeObserver(() => {
+                d3.select("#canvas svg")
+                    .attr("width",  canvasEl.clientWidth)
+                    .attr("height", canvasEl.clientHeight);
+                if (window.graphSimulation) {
+                    window.graphSimulation
+                        .force("center", d3.forceCenter(canvasEl.clientWidth / 2, canvasEl.clientHeight / 2))
+                        .alpha(0.1).restart();
+                }
+            }).observe(canvasEl);
+        }
     });
+}
+
+window.loadGraph = loadGraph;
 
 function drawGraph(data) {
 
@@ -120,16 +185,16 @@ function drawGraph(data) {
         .append("div")
         .attr("id", "node-tooltip")
         .style("position", "absolute")
-        .style("background", "white")
-        .style("border", "2px solid #333")
+        .style("background", "#ffffff")
+        .style("border", "1px solid #dddcda")
         .style("border-radius", "6px")
         .style("padding", "5px 10px")
         .style("font-size", "12px")
         .style("font-family", "Arial, sans-serif")
         .style("font-weight", "normal")
-        .style("color", "#333")
+        .style("color", "#1a1a1a")
         .style("pointer-events", "none")
-        .style("box-shadow", "0 2px 6px rgba(0,0,0,0.12)")
+        .style("box-shadow", "0 4px 12px rgba(0,0,0,0.10)")
         .style("white-space", "nowrap")
         .style("z-index", "500")
         .style("display", "none");
@@ -145,11 +210,11 @@ function drawGraph(data) {
         .attr("patternUnits", "userSpaceOnUse");
 
     pattern.append("circle")
-        .attr("cx", 1)
-        .attr("cy", 1)
-        .attr("r", 1)
-        .attr("fill", "#aaa")
-        .attr("opacity", 0.5);
+        .attr("cx", 1.5)
+        .attr("cy", 1.5)
+        .attr("r", 1.5)
+        .attr("fill", "#b0ada8")
+        .attr("opacity", 0.8);
 
     svg.append("rect")
         .attr("width", "100%")
@@ -158,32 +223,61 @@ function drawGraph(data) {
 
     const zoomLayer = svg.append("g");
 
-    // Node radius helper — used in simulation, collision, and rendering
-    function nodeRadius(d) {
-        if (d.type === "fw")     return 56 + NODE_SIZE;
-        if (d.type === "client") return 48 + NODE_SIZE;
-        return 52 + NODE_SIZE;
-    }
+    // Use module-level nodeRadiusFor
+    function nodeRadius(d) { return nodeRadiusFor(d.type); }
 
     // Build system lookup map before simulation (used in distance function)
     const systemMap = {};
     data.nodes.forEach(n => { systemMap[n.id] = n.system; });
 
+    // Build degree map — number of connections per node
+    const degreeMap = {};
+    data.nodes.forEach(n => { degreeMap[n.id] = 0; });
+    data.links.forEach(l => {
+        const s = resolveId(l.source);
+        const t = resolveId(l.target);
+        if (s in degreeMap) degreeMap[s]++;
+        if (t in degreeMap) degreeMap[t]++;
+    });
+
+    // High-degree nodes get extra repulsion + more link distance to push children out
+    function nodeCharge(d) {
+        const deg = degreeMap[d.id] || 0;
+        const base = d.type === "fw" || d.type === "router" ? LINK_STRENGTH * 4 : LINK_STRENGTH * 2;
+        // Scale extra repulsion logarithmically with degree
+        const extra = deg > 4 ? Math.log(deg - 3) * LINK_STRENGTH * 1.5 : 0;
+        return base + extra;
+    }
+
+    function linkDistance(d) {
+        const src = resolveId(d.source);
+        const tgt = resolveId(d.target);
+        const sameSystem = systemMap[src] === systemMap[tgt];
+        const baseD = sameSystem ? LINK_DISTANCE_SAME : LINK_DISTANCE_DIFF;
+        // If the hub has many connections, push children further away
+        const hubDeg = Math.max(degreeMap[src] || 0, degreeMap[tgt] || 0);
+        const degScale = hubDeg > 6 ? 1 + Math.log(hubDeg - 5) * 0.3 : 1;
+        return baseD * degScale;
+    }
+
+    // Collision radius also scales with degree for hub nodes
+    function collisionRadius(d) {
+        const deg = degreeMap[d.id] || 0;
+        const extra = deg > 4 ? Math.min(Math.log(deg - 3) * 8, 40) : 0;
+        return nodeRadius(d) + 14 + extra;
+    }
+
     // ============ Physics ============
     window.graphSimulation = d3.forceSimulation(data.nodes)
         .force("link", d3.forceLink(data.links)
             .id(d => d.id)
-            .distance(d => {
-                const src = resolveId(d.source);
-                const tgt = resolveId(d.target);
-                return systemMap[src] === systemMap[tgt] ? LINK_DISTANCE_SAME : LINK_DISTANCE_DIFF;
-            })
+            .distance(linkDistance)
         )
-        .alphaDecay(0.08)
-        .alphaMin(0.02)
-        .force("charge", d3.forceManyBody().strength(LINK_STRENGTH))
+        .alphaDecay(0.04)
+        .alphaMin(0.008)
+        .force("charge", d3.forceManyBody().strength(nodeCharge))
         .force("center", d3.forceCenter(width / 2, height / 2))
-        .force("collision", d3.forceCollide(d => nodeRadius(d) + 4));
+        .force("collision", d3.forceCollide(collisionRadius));
 
     // ============ Visual ============
 
@@ -191,7 +285,7 @@ function drawGraph(data) {
         .selectAll("line")
         .data(data.links)
         .join("line")
-        .attr("stroke", "#aaa")
+        .attr("stroke", "#b0ada8")
         .attr("stroke-width", d => {
             const src = resolveId(d.source);
             const tgt = resolveId(d.target);
@@ -205,8 +299,8 @@ function drawGraph(data) {
         .join("text")
         .attr("text-anchor", "middle")
         .attr("font-size", 10)
-        .attr("fill", "#aaa")
-        .attr("font-family", "Arial, sans-serif")
+        .attr("fill", "#a8a8a8")
+        .attr("font-family", "system-ui, Arial, sans-serif")
         .style("pointer-events", "none")
         .text(d => d.label);
 
@@ -227,7 +321,10 @@ function drawGraph(data) {
         .attr("text-anchor", "middle")
         .attr("dy", "0.35em")
         .style("pointer-events", "none")
-        .attr("font-size", FONT_SIZE);
+        .attr("font-size", FONT_SIZE)
+        .attr("fill", "#2a2a2a")
+        .attr("font-weight", "600")
+        .attr("font-family", "Inter, system-ui, sans-serif");
 
     // ============ Hover ============
 
@@ -269,13 +366,13 @@ function drawGraph(data) {
             if (isDragging) return;
             // Support both new ips array and legacy ip string
             const ipLines = Array.isArray(d.ips) && d.ips.length
-                ? d.ips.map(i => `<span style="color:#888;margin-right:4px">IP</span>${esc(i.address)}${esc(i.subnet || '')}`).join("<br>")
-                : `<span style="color:#888;margin-right:4px">IP</span>${esc(d.ip || "")}${esc(d.subnet || "")}`;
+                ? d.ips.map(i => `<span style="color:#8a8a8a;margin-right:6px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">IP</span>${esc(i.address)}${esc(i.subnet || '')}`).join("<br>")
+                : `<span style="color:#8a8a8a;margin-right:6px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">IP</span>${esc(d.ip || "")}${esc(d.subnet || "")}`;
             tooltip
                 .style("display", "block")
                 .html(
-                    `<span style="color:#888;margin-right:4px">System</span>${esc(d.system)}<br>` +
-                    `<span style="color:#888;margin-right:4px">ID</span>${esc(d.id)}<br>` +
+                    `<span style="color:#8a8a8a;margin-right:6px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">System</span>${esc(d.system)}<br>` +
+                    `<span style="color:#8a8a8a;margin-right:6px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">ID</span>${esc(d.id)}<br>` +
                     ipLines
                 );
             positionTooltip(d);
@@ -369,13 +466,21 @@ function initTimeline() {
     window._timelineBuffer = bufferT; // the "before events" stop
 
     const slider = document.getElementById("timeline-slider");
-    slider.min   = bufferT;
-    slider.max   = maxT;
-    slider.value = bufferT;
-    window.currentTime = bufferT;
+    const prevTime = window.currentTime;
+    slider.min = bufferT;
+    slider.max = maxT;
 
-    updateTimelineLabel(bufferT);
-    updateActiveEvents(bufferT);
+    // Preserve current position if slider was already in use
+    if (prevTime && prevTime > bufferT && prevTime <= maxT) {
+        slider.value = prevTime;
+        updateTimelineLabel(prevTime);
+        updateActiveEvents(prevTime);
+    } else {
+        slider.value = bufferT;
+        window.currentTime = bufferT;
+        updateTimelineLabel(bufferT);
+        updateActiveEvents(bufferT);
+    }
 }
 
 function updateTimelineLabel(ms) {
@@ -391,9 +496,10 @@ function updateActiveEvents(ms, fromPlayback) {
     window.currentTime  = ms;
     const showBlue = window._filterBlue !== false;
     const showRed  = window._filterRed  !== false;
+    const showGrey = window._filterGrey !== false;
     window.activeEvents = (window.allEvents || [])
         .filter(e => new Date(e.datetime).getTime() <= ms)
-        .filter(e => e.actor === "blue" ? showBlue : showRed)
+        .filter(e => e.actor === "blue" ? showBlue : e.actor === "red" ? showRed : showGrey)
         .sort((a, b) => new Date(b.datetime) - new Date(a.datetime));
 
     // Cards only visible during playback/step or when feed is open
@@ -466,32 +572,32 @@ function updateEventCards() {
 
         const sx = transform.applyX(node.x);
         const sy = transform.applyY(node.y);
-        const r  = (node.type === "fw" ? 56 : node.type === "client" ? 48 : 52) + NODE_SIZE;
-        const scaledR = r * transform.k;
+        const scaledR = nodeRadiusFor(node.type) * transform.k;
 
-        const color = e.actor === "red" ? ACTOR_RED : ACTOR_BLUE;
+        const color = ACTOR_COLOR[e.actor] || ACTOR_BLUE;
         const sev   = SEVERITY_COLORS[e.severity] || SEVERITY_COLORS.none;
         const time  = fmtTime(e.datetime);
 
-        // Card centered above node with a stem connecting it
-        const cardW   = 200;
-        const stemH   = 10; // px gap between card bottom and node top
+        // Card centered above node — stem bridges card bottom to node top
+        const cardW    = 220;
+        const stemH    = 20; // stem height in px
+        const nodeTop  = sy - scaledR;           // screen Y of top of node circle
+        const stemTop  = nodeTop - stemH;         // stem starts stemH above node top
         const cardLeft = sx - cardW / 2;
-        const cardTop  = sy - scaledR - stemH;
 
-        // Stem — a thin coloured line from card bottom to node edge
+        // Stem — thin bar connecting node top edge to card bottom
         const stem = document.createElement("div");
         stem.className = "event-card";
         stem.dataset.stemFor = nodeId;
         stem.style.cssText = `
             position:absolute;
             left:${sx - 1}px;
-            top:${sy - scaledR}px;
+            top:${stemTop}px;
             width:2px;
             height:${stemH}px;
             background:${color};
             pointer-events:none;
-            z-index:199;
+            z-index:201;
         `;
         canvas.appendChild(stem);
 
@@ -500,7 +606,7 @@ function updateEventCards() {
         card.style.cssText = `
             position:absolute;
             left:${cardLeft}px;
-            top:${cardTop}px;
+            top:${stemTop}px;
             transform:translateY(-100%);
             width:${cardW}px;
             background:#1e1e1e;
@@ -512,7 +618,7 @@ function updateEventCards() {
             color:#eee;
             pointer-events:none;
             box-shadow:0 4px 12px rgba(0,0,0,0.5);
-            z-index:200;
+            z-index:300;
         `;
         card.style.pointerEvents = "auto";
         card.innerHTML = `
@@ -523,6 +629,7 @@ function updateEventCards() {
                 </div>
                 <button class="event-card-close" style="background:none;border:none;color:#888;cursor:pointer;font-size:13px;padding:0 2px;line-height:1;" title="Close">✕</button>
             </div>
+            <div style="color:#666;font-size:9px;margin-bottom:1px;font-family:monospace;">${esc(e.nodeId)}</div>
             <div style="color:#aaa;font-size:10px;margin-bottom:3px;">${esc(time)}</div>
             <div>${esc(e.description)}</div>
             ${e.mitre ? `<div style="color:#aaa;font-size:10px;margin-top:2px;">MITRE: ${esc(e.mitre)}</div>` : ""}
@@ -549,8 +656,9 @@ function updateEventFeed() {
     // Always show ALL events (newest first), filtered by actor checkboxes
     const showBlue = window._filterBlue !== false;
     const showRed  = window._filterRed  !== false;
+    const showGrey = window._filterGrey !== false;
     const all = (window.allEvents || [])
-        .filter(e => e.actor === "blue" ? showBlue : showRed)
+        .filter(e => e.actor === "blue" ? showBlue : e.actor === "red" ? showRed : showGrey)
         .sort((a, b) => new Date(b.datetime) - new Date(a.datetime));
     feed.innerHTML = "";
 
@@ -565,7 +673,7 @@ function updateEventFeed() {
     all.forEach(e => {
         const node     = nodes.find(n => n.id === e.nodeId);
         const label    = node ? `${node.system} · ${node.hostname}` : e.nodeId;
-        const color    = e.actor === "red" ? ACTOR_RED : ACTOR_BLUE;
+        const color    = ACTOR_COLOR[e.actor] || ACTOR_BLUE;
         const sev      = SEVERITY_COLORS[e.severity] || SEVERITY_COLORS.none;
         const time     = fmtTime(e.datetime);
         const isPast   = new Date(e.datetime).getTime() <= currentMs;
@@ -576,21 +684,29 @@ function updateEventFeed() {
             border-left:3px solid ${color};
             padding:8px 10px;
             margin-bottom:6px;
-            background:#2a2a2a;
+            background:#f7f7f6;
             border-radius:0 6px 6px 0;
             cursor:pointer;
             opacity:${opacity};
         `;
         item.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
-                <span style="color:#ccc;font-size:11px;font-weight:bold;">${esc(label)}</span>
+                <span style="color:#1a1a1a;font-size:11px;font-weight:600;">${esc(label)}</span>
                 ${e.severity !== "none" ? `<span style="background:${sev};color:#111;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:bold;">${esc(e.severity).toUpperCase()}</span>` : ""}
             </div>
             <div style="color:#888;font-size:10px;margin-bottom:3px;">${esc(time)} · <span style="color:${color}">${esc(e.actor).toUpperCase()}</span></div>
-            <div style="color:#ddd;font-size:11px;">${esc(e.description)}</div>
+            <div style="color:#4a4a4a;font-size:11px;">${esc(e.description)}</div>
             ${e.mitre ? `<div style="color:#888;font-size:10px;margin-top:2px;">MITRE: ${esc(e.mitre)}</div>` : ""}
         `;
         item.addEventListener("click", () => {
+            // Seek timeline to this event's time and show the card
+            const ms = new Date(e.datetime).getTime();
+            const slider = document.getElementById("timeline-slider");
+            if (slider && ms >= (window._timelineMin||0) && ms <= (window._timelineMax||Infinity)) {
+                slider.value = ms;
+                if (typeof updateTimelineLabel   === "function") updateTimelineLabel(ms);
+                if (typeof updateActiveEvents    === "function") updateActiveEvents(ms, true);
+            }
             if (typeof window.selectNode === "function") window.selectNode(e.nodeId);
         });
         feed.appendChild(item);

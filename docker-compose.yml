@@ -35,6 +35,7 @@ services:
       DATABASE_URL: mysql://netline:${MYSQL_PASSWORD:-netlinepassword}@db:3306/netline
       PORT: 3000
       NODE_ENV: production
+      PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING: 1
     depends_on:
       db:
         condition: service_healthy

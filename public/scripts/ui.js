@@ -105,8 +105,13 @@ const tabs = [
                     <label>Type</label>
                     <select id="input-type">
                         <option value="fw">Firewall (fw)</option>
-                        <option value="client">Client</option>
+                        <option value="router">Router</option>
+                        <option value="switch">Switch</option>
                         <option value="server">Server</option>
+                        <option value="workstation">Workstation</option>
+                        <option value="client">Client</option>
+                        <option value="iot">IoT</option>
+                        <option value="unknown">Unknown</option>
                     </select>
                 </div>
                 <div class="field-group">
@@ -130,8 +135,8 @@ const tabs = [
             <h3>Nodes</h3>
             <div style="position:relative;margin-bottom:10px;">
                 <input id="node-search" type="text" placeholder="Search nodes…"
-                    style="width:100%;padding:7px 32px 7px 10px;border:1.5px solid #555;border-radius:6px;
-                           font-size:13px;font-family:Arial,sans-serif;background:#3a3a3a;color:#eee;outline:none;" />
+                    style="width:100%;padding:7px 32px 7px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);
+                           font-size:13px;font-family:inherit;background:var(--bg-1);color:var(--text-0);outline:none;" />
                 <span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);color:#888;font-size:12px;pointer-events:none;">⌕</span>
             </div>
             <div id="node-list"></div>
@@ -159,16 +164,21 @@ const tabs = [
                     </select>
                 </div>
             </div>
-            <div style="display:flex;gap:16px;margin-bottom:10px;">
+            <div style="display:flex;gap:14px;margin-bottom:10px;flex-wrap:wrap;">
                 <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;font-weight:normal;">
                     <input type="checkbox" id="filter-blue" checked
                         style="accent-color:#5153B4;width:14px;height:14px;" />
-                    <span style="color:#5153B4;font-weight:bold;">Own (Blue)</span>
+                    <span style="color:var(--accent);font-weight:600;">Own (Blue)</span>
                 </label>
                 <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;font-weight:normal;">
                     <input type="checkbox" id="filter-red" checked
                         style="accent-color:#B45153;width:14px;height:14px;" />
-                    <span style="color:#B45153;font-weight:bold;">Enemy (Red)</span>
+                    <span style="color:var(--danger);font-weight:600;">Enemy (Red)</span>
+                </label>
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;font-weight:normal;">
+                    <input type="checkbox" id="filter-grey" checked
+                        style="accent-color:#888;width:14px;height:14px;" />
+                    <span style="color:var(--text-2);font-weight:600;">Unknown (Grey)</span>
                 </label>
             </div>
             <div id="events-feed-list" style="overflow-y:auto;"></div>
@@ -180,9 +190,11 @@ const tabs = [
         label: "JSON",
         render: () => `
             <h3>JSON Editor</h3>
-            <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
                 <button id="json-clean-btn" class="form-btn-secondary" style="font-size:12px;padding:5px 12px;">Clean JSON</button>
                 <button id="json-export-btn" class="form-btn-secondary" style="font-size:12px;padding:5px 12px;">Export JSON</button>
+                <button id="json-import-btn" class="form-btn-secondary" style="font-size:12px;padding:5px 12px;">Import JSON</button>
+                <input id="json-import-file" type="file" accept=".json" style="display:none;" />
             </div>
             <div id="json-error" style="font-size:12px;color:#c0392b;min-height:16px;margin-bottom:4px;"></div>
             <textarea id="json-editor" spellcheck="false"></textarea>
@@ -242,7 +254,7 @@ tabs.forEach(tab => {
         </div>
         <div id="node-detail-error" style="font-size:12px;color:#f1948a;min-height:16px;margin-top:6px;"></div>
 
-        <hr style="border:none;border-top:1.5px solid #ddd;margin:16px 0 12px" />
+        <hr style="border:none;border-top:1px solid var(--border);margin:16px 0 12px" />
 
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
             <h3 style="margin:0;font-size:14px;">Events</h3>
@@ -261,13 +273,14 @@ tabs.forEach(tab => {
                 </div>
                 <div class="field-group" style="grid-column:1/-1">
                     <label>Description</label>
-                    <textarea id="ev-description" rows="2" style="resize:vertical;padding:7px 10px;border:1.5px solid #ccc;border-radius:6px;font-size:13px;font-family:Arial,sans-serif;outline:none;width:100%;"></textarea>
+                    <textarea id="ev-description" rows="2" style="resize:vertical;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;outline:none;width:100%;background:var(--bg-1);color:var(--text-0);"></textarea>
                 </div>
                 <div class="field-group">
                     <label>Actor</label>
-                    <select id="ev-actor" style="border-color:#ccc;color:#5153B4;font-weight:bold;background:#e8e8f8;">
+                    <select id="ev-actor" style="border-color:var(--border);color:var(--accent);font-weight:500;background:var(--accent-bg);">
                         <option value="blue">Own (Blue)</option>
                         <option value="red">Enemy (Red)</option>
+                        <option value="grey">Unknown (Grey)</option>
                     </select>
                 </div>
                 <div class="field-group">
@@ -316,12 +329,8 @@ tabs.forEach(tab => {
 wireAddNodeForm();
 // wireNodeList and wireJsonEditor called by graph.js once data is ready
 
-// Load notes into memory
+// Notes are loaded per-graph in loadGraph (graph.js)
 window.nodeNotes = {};
-fetch("/notes")
-    .then(r => r.ok ? r.json() : {})
-    .catch(() => ({}))
-    .then(data => { window.nodeNotes = data; });
 
 // ============ Timeline controls ============
 (function() {
@@ -455,6 +464,24 @@ function wireAddNodeForm() {
         el.addEventListener("blur",  () => el.style.borderColor = "#ccc");
     });
 
+    // Show optional hint for types that don't require IP
+    const typeSelect = document.getElementById("input-type");
+    function updateIpHint() {
+        const label = document.querySelector('label[for="input-ip-rows"], #input-ip-rows')?.previousElementSibling;
+        document.querySelectorAll(".ip-optional-hint").forEach(el => el.remove());
+        if (["switch", "router", "unknown"].includes(typeSelect?.value)) {
+            const hint = document.createElement("span");
+            hint.className = "ip-optional-hint";
+            hint.style.cssText = "font-weight:normal;color:#888;font-size:11px;margin-left:6px;";
+            hint.textContent = "(optional for this type)";
+            typeSelect.closest(".field-group")?.previousElementSibling?.querySelector("label")?.appendChild(hint);
+        }
+    }
+    if (typeSelect) {
+        typeSelect.addEventListener("change", updateIpHint);
+        updateIpHint();
+    }
+
     // Validate connections in real-time — warn if target not found
     const connInput = document.getElementById("input-connections");
     connInput.addEventListener("input", function() {
@@ -493,10 +520,13 @@ function wireAddNodeForm() {
         const errorEl     = document.getElementById("add-node-error");
 
         if (!hostname || !system) { errorEl.textContent = "Hostname and System are required."; return; }
-        if (ips.length === 0)     { errorEl.textContent = "At least one IP address is required."; return; }
+        const ipOptional = ["switch", "router", "unknown"].includes(type);
+        if (!ipOptional && ips.length === 0) { errorEl.textContent = "At least one IP address is required."; return; }
 
         const id      = `${system}-${hostname}`;
-        const newNode = { id, hostname, ips, type, system, ...(connections.length ? { connections } : {}) };
+        const graphId = window.currentGraphId;
+        if (!graphId) { errorEl.textContent = "No active graph — please wait for the app to load."; return; }
+        const newNode = { id, hostname, ips, type, system, graphId, ...(connections.length ? { connections } : {}) };
 
         fetch("/add-node", {
             method: "POST",
@@ -518,6 +548,9 @@ function wireAddNodeForm() {
     });
 }
 
+// ============ Import Preview ============
+
+
 // ============ JSON Editor ============
 function wireJsonEditor() {
     const editor    = document.getElementById("json-editor");
@@ -531,14 +564,79 @@ function wireJsonEditor() {
     const SIM_KEYS = ["index","x","y","vx","vy","fx","fy"];
 
     function loadJson() {
-        fetch("/graph")
+        const gid = window.currentGraphId || "";
+        fetch("/graph?graphId=" + gid)
             .then(r => r.ok ? r.json() : { nodes: [], links: [] })
             .catch(() => ({ nodes: [], links: [] }))
             .then(data => { editor.value = JSON.stringify(data, null, 4); errorEl.textContent = ""; });
     }
     loadJson();
 
+    window.reloadJsonEditor = loadJson;
+
     reloadBtn.addEventListener("click", loadJson);
+
+    const importBtn  = document.getElementById("json-import-btn");
+    const importFile = document.getElementById("json-import-file");
+    if (importBtn && importFile) {
+        importBtn.addEventListener("click", () => importFile.click());
+        importFile.addEventListener("change", function() {
+            const file = this.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = ev => {
+                try {
+                    const parsed = JSON.parse(ev.target.result);
+
+                    // Load into editor text box
+                    editor.value = JSON.stringify(parsed, null, 4);
+
+                    // Show name input bar above editor
+                    let nameBar = document.getElementById("import-name-bar");
+                    if (nameBar) nameBar.remove();
+                    nameBar = document.createElement("div");
+                    nameBar.id = "import-name-bar";
+                    nameBar.style.cssText = "background:var(--accent-bg);border:1px solid rgba(81,83,180,0.4);border-radius:8px;padding:8px 12px;margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;";
+                    nameBar.innerHTML = `
+                        <span style="font-size:12px;color:var(--accent);font-weight:600;">Import preview</span>
+                        <input id="import-graph-name" type="text" value="${file.name.replace(/\.json$/i,"")}"
+                            style="flex:1;min-width:120px;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;font-family:inherit;outline:none;background:var(--bg-0);color:var(--text-0);" />
+                        <button id="import-discard-btn" style="background:none;border:none;color:#888;cursor:pointer;font-size:12px;">✕ Discard</button>
+                    `;
+                    editor.parentNode.insertBefore(nameBar, editor);
+
+                    nameBar.querySelector("#import-discard-btn").addEventListener("click", () => {
+                        nameBar.remove();
+                        window._importPending = null;
+                        // Restore actual graph in canvas and editor
+                        if (typeof window.reloadJsonEditor === "function") window.reloadJsonEditor();
+                        if (window.currentGraphData && typeof drawGraph === "function") {
+                            d3.select("#canvas svg").remove();
+                            d3.select("#canvas #node-tooltip").remove();
+                            drawGraph(window.currentGraphData);
+                        }
+                        errorEl.textContent = "";
+                    });
+
+                    // Stash pending import data
+                    window._importPending = parsed;
+
+                    // Draw preview on main canvas (does not affect DB or currentGraphData)
+                    d3.select("#canvas svg").remove();
+                    d3.select("#canvas #node-tooltip").remove();
+                    if (typeof drawGraph === "function") drawGraph(JSON.parse(JSON.stringify(parsed)));
+
+                    errorEl.style.color = "#5153B4";
+                    errorEl.textContent = "Preview loaded — name the graph and click Save to import.";
+                } catch(err) {
+                    errorEl.style.color = "#c0392b";
+                    errorEl.textContent = "Invalid JSON file: " + err.message;
+                }
+            };
+            reader.readAsText(file);
+            this.value = "";
+        });
+    }
 
     // Clean: strip simulation state + deduplicate links
     cleanBtn.addEventListener("click", () => {
@@ -606,24 +704,68 @@ function wireJsonEditor() {
         try { parsed = JSON.parse(editor.value); }
         catch (e) { errorEl.textContent = "Invalid JSON: " + e.message; return; }
 
-        fetch("/save-graph", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(parsed)
-        })
-        .then(r => r.json())
-        .then(res => {
-            if (res.error) { errorEl.textContent = res.error; return; }
-            window.currentGraphData = parsed;
-            d3.select("#canvas svg").remove();
-            d3.select("#canvas #node-tooltip").remove();
-            drawGraph(parsed);
-            renderNodeList();
-            errorEl.style.color = "#27ae60";
-            errorEl.textContent = "Saved.";
-            setTimeout(() => { errorEl.textContent = ""; errorEl.style.color = "#c0392b"; }, 2000);
-        })
-        .catch(() => { errorEl.textContent = "Server error — could not save."; });
+        const isImport = !!window._importPending;
+
+        if (isImport) {
+            // Import mode — create a new graph
+            const nameBar  = document.getElementById("import-name-bar");
+            const nameInput = nameBar ? nameBar.querySelector("#import-graph-name") : null;
+            const graphName = (nameInput?.value.trim()) || "Imported graph";
+
+            fetch("/create-graph", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: graphName })
+            })
+            .then(r => r.json())
+            .then(res => {
+                if (!res.ok) throw new Error(res.error || "Failed to create graph");
+                window._allGraphs = [...(window._allGraphs || []), res.graph];
+                return fetch("/save-graph", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ graph: parsed, graphId: res.graph.id })
+                }).then(r => r.json()).then(saveRes => {
+                    if (!saveRes.ok) throw new Error(saveRes.error || "Save failed");
+                    return res.graph.id;
+                });
+            })
+            .then(newGraphId => {
+                window._importPending = null;
+                nameBar?.remove();
+                window._activeNodeId = null;
+                if (sidebarOpen && activeTab === "node-detail") selectTab("nodes");
+                if (typeof window.loadGraph === "function") window.loadGraph(newGraphId);
+                errorEl.style.color = "#27ae60";
+                errorEl.textContent = "Imported as new graph.";
+                setTimeout(() => { errorEl.textContent = ""; errorEl.style.color = "#c0392b"; }, 2000);
+            })
+            .catch(err => { errorEl.textContent = "Import failed: " + err.message; });
+
+        } else {
+            // Normal save — overwrite current graph
+            fetch("/save-graph", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ graph: parsed, graphId: window.currentGraphId })
+            })
+            .then(r => r.json())
+            .then(res => {
+                if (res.error) { errorEl.textContent = res.error; return; }
+                window.currentGraphData = parsed;
+                window.allEvents = [];
+                if (typeof initTimeline      === "function") initTimeline();
+                if (typeof updateActiveEvents === "function") updateActiveEvents(0);
+                d3.select("#canvas svg").remove();
+                d3.select("#canvas #node-tooltip").remove();
+                drawGraph(parsed);
+                renderNodeList();
+                errorEl.style.color = "#27ae60";
+                errorEl.textContent = "Saved.";
+                setTimeout(() => { errorEl.textContent = ""; errorEl.style.color = "#c0392b"; }, 2000);
+            })
+            .catch(() => { errorEl.textContent = "Server error — could not save."; });
+        }
     });
 }
 
@@ -692,9 +834,9 @@ function renderNodeList() {
                 <div class="field-group">
                     <label>Type</label>
                     <select class="edit-type">
-                        <option value="fw" ${node.type==="fw"?"selected":""}>Firewall (fw)</option>
-                        <option value="client" ${node.type==="client"?"selected":""}>Client</option>
-                        <option value="server" ${node.type==="server"?"selected":""}>Server</option>
+                        ${["fw","router","switch","server","workstation","client","iot","unknown"].map(t =>
+                            `<option value="${t}" ${node.type===t?"selected":""}>${t.charAt(0).toUpperCase()+t.slice(1)}</option>`
+                        ).join("")}
                     </select>
                 </div>
                 <div class="field-group">
@@ -754,7 +896,8 @@ function renderNodeList() {
             const ips         = collectIps(ipRowsContainer);
 
             if (!hostname || !system) { errorEl.textContent = "Hostname and System are required."; return; }
-            if (ips.length === 0)     { errorEl.textContent = "At least one IP address is required."; return; }
+            const ipOptionalEdit = ["switch", "router", "unknown"].includes(type);
+            if (!ipOptionalEdit && ips.length === 0) { errorEl.textContent = "At least one IP address is required."; return; }
 
             const updated = { ...node, hostname, ips, system, type,
                 ...(connections.length ? { connections } : { connections: [] }) };
@@ -854,20 +997,24 @@ function wireEventsTab() {
     // Filter checkboxes
     const filterBlue = document.getElementById("filter-blue");
     const filterRed  = document.getElementById("filter-red");
+    const filterGrey = document.getElementById("filter-grey");
     if (filterBlue && !filterBlue._wired) {
         filterBlue._wired = true;
         filterRed._wired  = true;
+        if (filterGrey) filterGrey._wired = true;
         const onChange = () => {
             window._filterBlue = filterBlue.checked;
             window._filterRed  = filterRed.checked;
-            if (typeof updateEventFeed      === "function") updateEventFeed();
-            if (typeof updateActiveEvents   === "function") updateActiveEvents(window.currentTime || 0);
+            window._filterGrey = filterGrey ? filterGrey.checked : true;
+            if (typeof updateEventFeed    === "function") updateEventFeed();
+            if (typeof updateActiveEvents === "function") updateActiveEvents(window.currentTime || 0);
         };
         filterBlue.addEventListener("change", onChange);
         filterRed.addEventListener("change",  onChange);
-        // Init globals
+        if (filterGrey) filterGrey.addEventListener("change", onChange);
         window._filterBlue = true;
         window._filterRed  = true;
+        window._filterGrey = true;
     }
 
     if (typeof updateEventFeed === "function") updateEventFeed();
@@ -890,12 +1037,13 @@ function renderNodeEvents(nodeId, container) {
     }
 
     events.forEach(e => {
-        const color = e.actor === "red" ? "#B45153" : "#5153B4";
+        const ACTOR_C = { blue:"#5153B4", red:"#B45153", grey:"#888888" };
+        const color = ACTOR_C[e.actor] || "#5153B4";
         const sev   = { none:"#888", low:"#6fcf97", medium:"#f2c94c", high:"#f2994a", critical:"#eb5757" }[e.severity] || "#888";
         const time  = fmtDatetime(e.datetime);
 
         const item = document.createElement("div");
-        item.style.cssText = `border-left:3px solid ${color};padding:8px 10px;margin-bottom:6px;background:#f0eeee;border-radius:0 6px 6px 0;cursor:pointer;`;
+        item.style.cssText = `border-left:3px solid ${color};padding:8px 10px;margin-bottom:6px;background:var(--bg-1);border-radius:0 var(--radius-sm) var(--radius-sm) 0;cursor:pointer;`;
         item.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
                 <span style="color:${color};font-size:11px;font-weight:bold;">${escHtml(e.actor).toUpperCase()}</span>
@@ -907,7 +1055,7 @@ function renderNodeEvents(nodeId, container) {
             </div>
             <div style="color:#888;font-size:10px;margin-bottom:3px;">${escHtml(time)}</div>
             <div style="font-size:12px;font-weight:normal;color:#333;">${escHtml(e.description)}</div>
-            ${e.mitre ? `<div style="color:#888;font-size:10px;margin-top:2px;">MITRE: ${escHtml(e.mitre)}</div>` : ""}
+            ${e.mitre ? `<div style="color:#9898a6;font-size:10px;margin-top:2px;">MITRE: ${escHtml(e.mitre)}</div>` : ""}
             ${e.tool  ? `<div style="color:#888;font-size:10px;">Tool: ${escHtml(e.tool)}</div>` : ""}
             ${e.cve   ? `<div style="color:#888;font-size:10px;">CVE: ${escHtml(e.cve)}</div>` : ""}
             ${e.srcIp ? `<div style="color:#888;font-size:10px;">Src: ${escHtml(e.srcIp)}</div>` : ""}
@@ -997,10 +1145,10 @@ window.selectNode = function(id) {
     const node  = (data.nodes || []).find(n => n.id === id);
     if (!node) return;
 
-    // If this node's panel is already open, close sidebar and deselect
-    if (activeTab === "node-detail" && sidebarOpen &&
-        document.getElementById("node-detail-title")?.textContent === node.system + " · " + node.hostname) {
+    // If this exact node is already open, toggle close
+    if (activeTab === "node-detail" && sidebarOpen && window._activeNodeId === id) {
         closeSidebar();
+        window._activeNodeId = null;
         if (typeof window.setHighlightedNodes === "function") {
             const current = Array.from(document.querySelectorAll(".node-list-item.selected")).map(el => el.dataset.id);
             const idx = current.indexOf(id);
@@ -1016,9 +1164,9 @@ window.selectNode = function(id) {
         ? node.ips.map(i => escHtml(i.address + (i.subnet || ""))).join(", ")
         : escHtml(node.ip || "—");
     document.getElementById("node-detail-meta").innerHTML =
-        `<span style="color:#ccc">ID</span>&nbsp;&nbsp;${escHtml(node.id)}<br>` +
-        `<span style="color:#ccc">IP</span>&nbsp;&nbsp;${ipList}<br>` +
-        `<span style="color:#ccc">Type</span>&nbsp;&nbsp;${escHtml(node.type)}`;
+        `<span style="color:var(--text-2);font-size:10px;text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">ID</span>&nbsp;&nbsp;${escHtml(node.id)}<br>` +
+        `<span style="color:var(--text-2);font-size:10px;text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">IP</span>&nbsp;&nbsp;${ipList}<br>` +
+        `<span style="color:var(--text-2);font-size:10px;text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">Type</span>&nbsp;&nbsp;${escHtml(node.type)}`;
 
     const notesEl   = document.getElementById("node-detail-notes");
     const previewEl = document.getElementById("node-detail-preview");
@@ -1131,9 +1279,13 @@ window.selectNode = function(id) {
     // Actor select colour
     const actorSel = document.getElementById("ev-actor");
     function updateActorColour() {
-        const c  = actorSel.value === "red" ? "#B45153" : "#5153B4";
-        const bg = actorSel.value === "red" ? "#f8e8e8" : "#e8e8f8";
-        actorSel.style.borderColor = "#ccc";   // same grey as other fields
+        const palette = {
+            blue: { c: "var(--accent)",  bg: "var(--accent-bg)" },
+            red:  { c: "var(--danger)",  bg: "var(--danger-bg)" },
+            grey: { c: "var(--text-2)",  bg: "var(--bg-2)"      },
+        };
+        const {c,bg} = palette[actorSel.value] || palette.blue;
+        actorSel.style.borderColor = "var(--border)";
         actorSel.style.color       = c;
         actorSel.style.background  = bg;
     }
@@ -1215,6 +1367,7 @@ window.selectNode = function(id) {
     renderNodeEvents(node.id, evList);
 
     // Open detail panel
+    window._activeNodeId = id;
     activeTab = "node-detail";
     tabStrip.querySelectorAll(".sidebar-tab").forEach(btn => btn.classList.remove("active"));
     contentPanel.querySelectorAll(".panel").forEach(p => {
@@ -1245,14 +1398,16 @@ function selectTab(id) {
 }
 
 function positionTimeline() {
-    const bar  = document.getElementById("timeline-bar");
-    if (!bar || bar.style.display === "none") return;
-    const sbW  = sidebarOpen ? (sidebar.clientWidth || 0) : 0;
-    // Left: always at least 80px from screen edge to clear sidebar toggle button
+    const bar = document.getElementById("timeline-bar");
+    if (!bar) return;
+    // Always update position regardless of display state
+    const sbW    = sidebarOpen ? (sidebar.clientWidth || 0) : 0;
     const leftPx = Math.max(80, sbW + 12);
     bar.style.left  = leftPx + "px";
     bar.style.right = "78px";
-    document.getElementById("canvas").style.paddingTop = "60px";
+    if (bar.style.display !== "none") {
+        document.getElementById("canvas").style.paddingTop = "60px";
+    }
 }
 
 window.positionTimeline = positionTimeline;
@@ -1297,6 +1452,7 @@ toggleBtn.addEventListener("click", () => {
             const dx       = e.clientX - startX;
             const newWidth = Math.max(200, Math.min(window.innerWidth * 0.8, startWidth + dx));
             sidebar.style.width = newWidth + "px";
+            if (typeof positionTimeline === "function") positionTimeline();
         }
 
         function onUp() {
@@ -1326,8 +1482,8 @@ let isExpanded = false;
 const chevronImg = bottomRight.append("button")
     .style("width", "20px").style("height", "45px").style("display", "flex")
     .style("align-items", "center").style("justify-content", "center")
-    .style("cursor", "pointer").style("background", "white")
-    .style("border", "2px solid #333").style("border-radius", "7px")
+    .style("cursor", "pointer").style("background", "var(--bg-0)")
+    .style("border", "1px solid var(--border)").style("border-radius", "7px")
     .style("transition", "all 0.2s ease")
     .on("click", () => {
         isExpanded = !isExpanded;
@@ -1353,8 +1509,8 @@ const expandPanel = bottomRight.append("div")
 expandPanel.append("button")
     .style("width", "45px").style("height", "45px").style("display", "flex")
     .style("align-items", "center").style("justify-content", "center")
-    .style("cursor", "pointer").style("background", "white")
-    .style("border", "2px solid #333").style("border-radius", "8px")
+    .style("cursor", "pointer").style("background", "var(--bg-0)")
+    .style("border", "1px solid var(--border)").style("border-radius", "8px")
     .style("transition", "all 0.2s ease")
     .on("click", () => {
         const svgEl = document.querySelector("#canvas svg");
@@ -1372,12 +1528,158 @@ expandPanel.append("button")
     .append("img").attr("src", "images/icons/export.svg")
         .style("width", "24px").style("height", "24px").style("pointer-events", "none");
 
+// ── Graph switcher ─────────────────────────────────────────────────────────
+const graphSwitcherWrap = uiLayer.append("div")
+    .style("position", "absolute").style("bottom", "75px").style("right", "20px")
+    .style("pointer-events", "auto").style("display", "flex").style("flex-direction", "column")
+    .style("align-items", "flex-end").style("gap", "6px");
+
+const graphLabel = graphSwitcherWrap.append("div")
+    .style("background", "var(--bg-0)").style("border", "1px solid var(--border)").style("border-radius", "var(--radius-sm)")
+    .style("padding", "0").style("overflow", "hidden").style("display", "none")
+    .attr("id", "graph-switcher-panel");
+
+// Toggle button
+graphSwitcherWrap.append("button")
+    .style("width", "45px").style("height", "45px").style("display", "flex")
+    .style("align-items", "center").style("justify-content", "center")
+    .style("cursor", "pointer").style("background", "var(--bg-0)")
+    .style("border", "1px solid var(--border)").style("border-radius", "8px")
+    .style("color", "var(--text-1)")
+    .style("transition", "all 0.2s ease")
+    .attr("id", "graph-switcher-btn")
+    .attr("title", "Switch graph")
+    .html(`<svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" style="pointer-events:none">
+        <circle cx="9" cy="4" r="2.2" stroke="currentColor" stroke-width="1.5"/>
+        <circle cx="3" cy="14" r="2.2" stroke="currentColor" stroke-width="1.5"/>
+        <circle cx="15" cy="14" r="2.2" stroke="currentColor" stroke-width="1.5"/>
+        <line x1="9" y1="6.2" x2="3.9" y2="11.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        <line x1="9" y1="6.2" x2="14.1" y2="11.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        <line x1="5.2" y1="14" x2="12.8" y2="14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>`)
+    .on("click", () => {
+        const panel = document.getElementById("graph-switcher-panel");
+        const open  = panel.style.display === "none";
+        panel.style.display = open ? "block" : "none";
+        if (open) renderGraphPanel();
+    });
+
+function renderGraphPanel() {
+    const panel  = document.getElementById("graph-switcher-panel");
+    const graphs = window._allGraphs || [];
+    const cur    = window.currentGraphId;
+
+    panel.innerHTML = "";
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "min-width:220px;padding:10px;font-family:inherit;font-size:13px;color:var(--text-0);";
+
+    const title = document.createElement("div");
+    title.style.cssText = "font-weight:600;color:var(--text-2);margin-bottom:8px;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;";
+    title.textContent = "Graphs";
+    wrap.appendChild(title);
+
+    graphs.forEach(gr => {
+        const row = document.createElement("div");
+        row.style.cssText = `display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:6px;cursor:pointer;background:${gr.id===cur?"var(--accent-bg)":"transparent"};margin-bottom:2px;`;
+        row.innerHTML = `
+            <span style="flex:1;color:${gr.id===cur?"var(--accent)":"var(--text-1)"};font-weight:${gr.id===cur?"bold":"normal"};">${esc(gr.name)}</span>
+            <button data-rename="${gr.id}" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:11px;padding:0 3px;" title="Rename">✎</button>
+            <button data-del="${gr.id}" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:12px;padding:0 3px;" title="Delete">✕</button>
+        `;
+        // Switch on row click
+        row.addEventListener("click", e => {
+            if (e.target.closest("button")) return;
+            document.getElementById("graph-switcher-panel").style.display = "none";
+            window._activeNodeId = null;
+            if (sidebarOpen && activeTab === "node-detail") selectTab("nodes");
+            if (typeof window.loadGraph === "function") window.loadGraph(gr.id);
+        });
+        // Rename
+        row.querySelector("[data-rename]").addEventListener("click", e => {
+            e.stopPropagation();
+            const name = prompt("New name:", gr.name);
+            if (!name || !name.trim()) return;
+            fetch("/rename-graph", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: gr.id, name: name.trim() })
+            }).then(r => r.json()).then(res => {
+                if (res.ok) {
+                    const idx = (window._allGraphs||[]).findIndex(g => g.id === gr.id);
+                    if (idx !== -1) window._allGraphs[idx].name = name.trim();
+                    renderGraphPanel();
+                    if (typeof window.refreshGraphSwitcher === "function") window.refreshGraphSwitcher();
+                }
+            });
+        });
+        // Delete
+        row.querySelector("[data-del]").addEventListener("click", e => {
+            e.stopPropagation();
+            const nodeCount = (window.currentGraphData||{}).nodes?.length || 0;
+            const msg = gr.id === cur
+                ? `Delete "${gr.name}" (currently active, ${nodeCount} nodes)? This cannot be undone.`
+                : `Delete "${gr.name}"? This cannot be undone.`;
+            if (!confirm(msg)) return;
+            fetch("/delete-graph", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: gr.id })
+            }).then(r => r.json()).then(res => {
+                if (res.error) { alert(res.error); return; }
+                window._allGraphs = (window._allGraphs||[]).filter(g => g.id !== gr.id);
+                // If deleted current, switch to first remaining
+                if (gr.id === cur && window._allGraphs.length > 0) {
+                    document.getElementById("graph-switcher-panel").style.display = "none";
+                    if (typeof window.loadGraph === "function") window.loadGraph(window._allGraphs[0].id);
+                } else {
+                    renderGraphPanel();
+                }
+            });
+        });
+        wrap.appendChild(row);
+    });
+
+    // New graph
+    const newRow = document.createElement("div");
+    newRow.style.cssText = "margin-top:8px;padding-top:8px;border-top:1.5px solid #eee;display:flex;gap:6px;";
+    newRow.innerHTML = `
+        <input id="new-graph-name" type="text" placeholder="New graph name…"
+            style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;outline:none;background:var(--bg-1);color:var(--text-0);font-family:inherit;" />
+        <button id="new-graph-btn" style="padding:5px 10px;background:var(--accent);color:white;border:none;border-radius:var(--radius-sm);cursor:pointer;font-size:12px;font-family:inherit;">+</button>
+    `;
+    newRow.querySelector("#new-graph-btn").addEventListener("click", () => {
+        const name = newRow.querySelector("#new-graph-name").value.trim();
+        if (!name) return;
+        fetch("/create-graph", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name })
+        }).then(r => r.json()).then(res => {
+            if (res.ok) {
+                window._allGraphs = [...(window._allGraphs||[]), res.graph];
+                newRow.querySelector("#new-graph-name").value = "";
+                document.getElementById("graph-switcher-panel").style.display = "none";
+                window._activeNodeId = null;
+                if (sidebarOpen && activeTab === "node-detail") selectTab("nodes");
+                if (typeof window.loadGraph === "function") window.loadGraph(res.graph.id);
+            }
+        });
+    });
+    wrap.appendChild(newRow);
+    panel.appendChild(wrap);
+}
+
+window.refreshGraphSwitcher = function() {
+    const btn = document.getElementById("graph-switcher-btn");
+    if (btn) {
+        const cur = (window._allGraphs||[]).find(g => g.id === window.currentGraphId);
+        btn.title = cur ? cur.name : "Switch graph";
+    }
+};
+
 // Home / reset zoom button
 bottomRight.append("button")
     .style("width", "45px").style("height", "45px").style("display", "flex")
     .style("align-items", "center").style("justify-content", "center")
-    .style("cursor", "pointer").style("background", "white")
-    .style("border", "2px solid #333").style("border-radius", "8px")
+    .style("cursor", "pointer").style("background", "var(--bg-0)")
+    .style("border", "1px solid var(--border)").style("border-radius", "8px")
     .style("margin-left", "5px").style("transition", "all 0.2s ease")
     .on("click", () => { if (typeof window.resetZoom === "function") window.resetZoom(); })
     .append("img").attr("src", "images/icons/fullscreen.svg")
