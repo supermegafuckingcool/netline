@@ -6,7 +6,7 @@ const FONT_SIZE          = 13;  // node label font size (px)
 const LINK_DISTANCE_SAME = 120; // distance between nodes in the same system
 const LINK_DISTANCE_DIFF = 300; // distance between nodes in different systems
 const LINK_STRENGTH      = -30; // node repulsion (more negative = further apart)
-const DOT_GRID_SIZE      = 45;  // background dot grid spacing (px)
+const DOT_GRID_SIZE      = 24;  // background dot grid spacing (px)
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Escape HTML to prevent XSS when injecting into innerHTML
@@ -57,7 +57,7 @@ window.currentGraphId = null; // active graph id
 // Format datetime as YYYY-MM-DD HH:MM:SS (24h) in selected timezone
 function fmtTime(d) {
     if (!(d instanceof Date)) d = new Date(d);
-    const tz = window.selectedTimezone || "Europe/Paris";
+    const tz = window.selectedTimezone || "UTC";
     const p  = n => String(n).padStart(2, "0");
     try {
         // Use Intl.DateTimeFormat for locale-independent 24h formatting
@@ -108,16 +108,29 @@ function loadGraph(graphId) {
     window.activeEvents         = [];
     if (typeof window.refreshGraphSwitcher === "function") window.refreshGraphSwitcher();
 
+    // Show loading overlay while fetching
     const canvasEl = document.getElementById("canvas");
+    let loadingEl = document.getElementById("graph-loading");
+    if (!loadingEl) {
+        loadingEl = document.createElement("div");
+        loadingEl.id = "graph-loading";
+        loadingEl.style.cssText = "position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(245,245,244,0.7);z-index:90;font-size:13px;color:#6a6a6a;font-family:inherit;pointer-events:none;";
+        loadingEl.textContent = "Loading graph…";
+        canvasEl.appendChild(loadingEl);
+    }
+    loadingEl.style.display = "flex";
 
     Promise.all([
-        fetch("/graph?graphId=" + graphId).then(r => r.ok ? r.json() : { nodes: [], links: [] }).catch(() => ({ nodes: [], links: [] })),
+        fetch("/graph?graphId=" + graphId).then(r => r.ok ? r.json() : Promise.reject("graph " + r.status)),
         fetch("/events?graphId=" + graphId).then(r => r.ok ? r.json() : []).catch(() => []),
         fetch("/notes?graphId=" + graphId).then(r => r.ok ? r.json() : {}).catch(() => ({})),
     ]).then(([data, events, notes]) => {
         window.currentGraphData = data;
         window.allEvents        = events;
         window.nodeNotes        = notes;
+
+        const loadingOverlay = document.getElementById("graph-loading");
+        if (loadingOverlay) loadingOverlay.style.display = "none";
 
         initTimeline();
 
@@ -150,10 +163,37 @@ function loadGraph(graphId) {
                 }
             }).observe(canvasEl);
         }
+    }).catch(err => {
+        const ov = document.getElementById("graph-loading");
+        if (ov) { ov.textContent = "Failed to load graph — " + err; ov.style.color = "#B45153"; }
+        console.error("loadGraph failed:", err);
     });
 }
 
 window.loadGraph = loadGraph;
+
+// Pan canvas to center on a node without opening the sidebar
+window.focusNode = function(nodeId) {
+    const nodes = (window.currentGraphData || {}).nodes || [];
+    const node  = nodes.find(n => n.id === nodeId);
+    if (!node || node.x == null) return;
+
+    const svg       = document.querySelector("#canvas svg");
+    if (!svg) return;
+    const canvasEl  = document.getElementById("canvas");
+    const sb        = document.getElementById("sidebar");
+    const sbW       = sb && sb.classList.contains("open") ? sb.clientWidth : 0;
+    const W         = canvasEl.clientWidth;
+    const H         = canvasEl.clientHeight;
+    const curT      = window._lastTransform || d3.zoomIdentity;
+    const targetX   = (W + sbW) / 2 - node.x * curT.k;
+    const targetY   = H / 2       - node.y * curT.k;
+    const newT      = d3.zoomIdentity.translate(targetX, targetY).scale(curT.k);
+    d3.select(svg).transition().duration(400).call(
+        d3.zoom().scaleExtent([0.02, 4]).transform, newT
+    );
+    window._lastTransform = newT;
+};
 
 function drawGraph(data) {
 
@@ -390,7 +430,7 @@ function drawGraph(data) {
 
     // ============ Zoom ============
     const zoom = d3.zoom()
-        .scaleExtent([0.2, 4])
+        .scaleExtent([0.02, 4])
         .on("zoom", (event) => {
             const { transform } = event;
             window._lastTransform = transform;
@@ -409,12 +449,47 @@ function drawGraph(data) {
     svg.call(zoom);
 
     window.resetZoom = function() {
-        const sb = document.getElementById("sidebar");
-        const sbW = sb.classList.contains("open") ? sb.clientWidth : 0;
-        const cx  = sbW + (window.innerWidth - sbW) / 2;
-        const cy  = window.innerHeight / 2;
-        svg.transition().duration(300).call(zoom.transform,
-            d3.zoomIdentity.translate(cx - width / 2, cy - height / 2)
+        const nodes = (window.currentGraphData || {}).nodes || [];
+        const sb    = document.getElementById("sidebar");
+        const sbW   = sb && sb.classList.contains("open") ? sb.clientWidth : 0;
+        const W     = document.getElementById("canvas").clientWidth;
+        const H     = document.getElementById("canvas").clientHeight;
+        const pad   = 60; // px padding around the graph
+
+        if (nodes.length === 0) {
+            svg.transition().duration(300).call(zoom.transform, d3.zoomIdentity);
+            return;
+        }
+
+        // Find bounding box of all nodes that have been placed
+        const placed = nodes.filter(n => n.x != null && n.y != null);
+        if (placed.length === 0) {
+            svg.transition().duration(300).call(zoom.transform, d3.zoomIdentity);
+            return;
+        }
+        const xs = placed.map(n => n.x);
+        const ys = placed.map(n => n.y);
+        const minX = Math.min(...xs) - pad;
+        const maxX = Math.max(...xs) + pad;
+        const minY = Math.min(...ys) - pad;
+        const maxY = Math.max(...ys) + pad;
+
+        // Available canvas area (excluding sidebar)
+        const availW = W - sbW;
+        const availH = H;
+        const scaleX = availW  / (maxX - minX);
+        const scaleY = availH  / (maxY - minY);
+        const k      = Math.min(scaleX, scaleY, 2); // cap at 2x
+
+        // Center within available area
+        const midX  = (minX + maxX) / 2;
+        const midY  = (minY + maxY) / 2;
+        const tx    = sbW + availW / 2 - k * midX;
+        const ty    = availH    / 2 - k * midY;
+
+        svg.transition().duration(400).call(
+            zoom.transform,
+            d3.zoomIdentity.translate(tx, ty).scale(k)
         );
     };
 
@@ -574,18 +649,28 @@ function updateEventCards() {
         const sy = transform.applyY(node.y);
         const scaledR = nodeRadiusFor(node.type) * transform.k;
 
+        // SVG may sit below the canvas top edge (e.g. when the timeline bar
+        // adds padding-top to #canvas). Cards are absolutely positioned inside
+        // #canvas, so we need the SVG's top relative to the canvas — not the
+        // document. getBoundingClientRect gives reliable rendered positions.
+        const canvasEl  = document.getElementById("canvas");
+        const canvasTop = canvasEl.getBoundingClientRect().top;
+        const svgBcr    = (document.querySelector("#canvas svg") || canvasEl).getBoundingClientRect();
+        const svgOffY   = svgBcr.top - canvasTop;
+        const absY      = sy + svgOffY;   // canvas-relative Y of node centre
+
         const color = ACTOR_COLOR[e.actor] || ACTOR_BLUE;
         const sev   = SEVERITY_COLORS[e.severity] || SEVERITY_COLORS.none;
         const time  = fmtTime(e.datetime);
 
-        // Card centered above node — stem bridges card bottom to node top
+        // Card centered above node — stem bottom touches node top edge exactly
         const cardW    = 220;
-        const stemH    = 20; // stem height in px
-        const nodeTop  = sy - scaledR;           // screen Y of top of node circle
-        const stemTop  = nodeTop - stemH;         // stem starts stemH above node top
+        const stemH    = 20;
+        const nodeTop  = absY - scaledR;   // canvas-relative Y of node top edge
+        const stemTop  = nodeTop - stemH;
         const cardLeft = sx - cardW / 2;
 
-        // Stem — thin bar connecting node top edge to card bottom
+        // Stem
         const stem = document.createElement("div");
         stem.className = "event-card";
         stem.dataset.stemFor = nodeId;
@@ -597,7 +682,7 @@ function updateEventCards() {
             height:${stemH}px;
             background:${color};
             pointer-events:none;
-            z-index:201;
+            z-index:120;
         `;
         canvas.appendChild(stem);
 
@@ -618,7 +703,7 @@ function updateEventCards() {
             color:#eee;
             pointer-events:none;
             box-shadow:0 4px 12px rgba(0,0,0,0.5);
-            z-index:300;
+            z-index:120;
         `;
         card.style.pointerEvents = "auto";
         card.innerHTML = `
@@ -691,23 +776,40 @@ function updateEventFeed() {
         `;
         item.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
-                <span style="color:#1a1a1a;font-size:11px;font-weight:600;">${esc(label)}</span>
+                <span style="color:#1a1a1a;font-size:12px;font-weight:600;">${esc(label)}</span>
                 ${e.severity !== "none" ? `<span style="background:${sev};color:#111;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:bold;">${esc(e.severity).toUpperCase()}</span>` : ""}
             </div>
-            <div style="color:#888;font-size:10px;margin-bottom:3px;">${esc(time)} · <span style="color:${color}">${esc(e.actor).toUpperCase()}</span></div>
-            <div style="color:#4a4a4a;font-size:11px;">${esc(e.description)}</div>
-            ${e.mitre ? `<div style="color:#888;font-size:10px;margin-top:2px;">MITRE: ${esc(e.mitre)}</div>` : ""}
+            <div style="color:#666;font-size:11px;margin-bottom:3px;">${esc(time)} · <span style="color:${color};font-weight:600;">${esc(e.actor).toUpperCase()}</span></div>
+            <div style="color:#2a2a2a;font-size:12px;">${esc(e.description)}</div>
+            ${e.mitre ? `<div style="color:#777;font-size:11px;margin-top:2px;">MITRE: ${esc(e.mitre)}</div>` : ""}
         `;
-        item.addEventListener("click", () => {
-            // Seek timeline to this event's time and show the card
+        // "→" button — opens node detail panel
+        const gotoBtn = document.createElement("button");
+        gotoBtn.innerHTML = "&#x2192;";
+        gotoBtn.title = "Open node detail";
+        gotoBtn.style.cssText = "background:none;border:1px solid var(--border,#d0cec9);border-radius:4px;color:var(--text-2,#6a6a6a);cursor:pointer;font-size:12px;padding:1px 6px;line-height:1.4;flex-shrink:0;margin-left:4px;transition:background 0.1s,color 0.1s;";
+        gotoBtn.addEventListener("mouseenter", () => { gotoBtn.style.background = "var(--accent-bg,#eeeeff)"; gotoBtn.style.color = "var(--accent,#5153B4)"; gotoBtn.style.borderColor = "rgba(81,83,180,0.4)"; });
+        gotoBtn.addEventListener("mouseleave", () => { gotoBtn.style.background = "none"; gotoBtn.style.color = "var(--text-2,#6a6a6a)"; gotoBtn.style.borderColor = "var(--border,#d0cec9)"; });
+        gotoBtn.addEventListener("click", ev => {
+            ev.stopPropagation();
+            if (typeof window.selectNode === "function") window.selectNode(e.nodeId);
+        });
+        // Append button to first row of item
+        const firstRow = item.querySelector("div");
+        if (firstRow) firstRow.appendChild(gotoBtn);
+
+        item.addEventListener("click", ev => {
+            if (ev.target.closest("button")) return;
+            // Seek timeline to this event's time
             const ms = new Date(e.datetime).getTime();
             const slider = document.getElementById("timeline-slider");
             if (slider && ms >= (window._timelineMin||0) && ms <= (window._timelineMax||Infinity)) {
                 slider.value = ms;
-                if (typeof updateTimelineLabel   === "function") updateTimelineLabel(ms);
-                if (typeof updateActiveEvents    === "function") updateActiveEvents(ms, true);
+                if (typeof updateTimelineLabel === "function") updateTimelineLabel(ms);
+                if (typeof updateActiveEvents  === "function") updateActiveEvents(ms, true);
             }
-            if (typeof window.selectNode === "function") window.selectNode(e.nodeId);
+            // Pan canvas to node without opening sidebar
+            if (typeof window.focusNode === "function") window.focusNode(e.nodeId);
         });
         feed.appendChild(item);
     });
@@ -739,22 +841,25 @@ window.addNodeToGraph = function(newNode) {
     const data = window.currentGraphData;
     if (data.nodes.find(n => n.id === newNode.id)) return;
 
-    newNode.x = window.innerWidth  / 2 + (Math.random() - 0.5) * 100;
-    newNode.y = window.innerHeight / 2 + (Math.random() - 0.5) * 100;
+    // Place new node near the centre of the visible area
+    const t = window._lastTransform || d3.zoomIdentity;
+    const canvasEl = document.getElementById("canvas");
+    const cx = (canvasEl.clientWidth  / 2 - t.x) / t.k;
+    const cy = (canvasEl.clientHeight / 2 - t.y) / t.k;
+    newNode.x = cx + (Math.random() - 0.5) * 120;
+    newNode.y = cy + (Math.random() - 0.5) * 120;
     data.nodes.push(newNode);
 
-    // Add links — server already persisted them, add to in-memory data for live render
     if (newNode.connections) {
         newNode.connections.forEach(targetId => {
-            // Only add if not already present
-            const exists = data.links.some(l => {
-                const s = resolveId(l.source);
-                return s === newNode.id && (resolveId(l.target)) === targetId;
-            });
+            const exists = data.links.some(l =>
+                resolveId(l.source) === newNode.id && resolveId(l.target) === targetId
+            );
             if (!exists) data.links.push({ source: newNode.id, target: targetId, label: "" });
         });
     }
 
+    // Full redraw is acceptable for a single add; avoids complex incremental D3 bookkeeping
     d3.select("#canvas svg").remove();
     d3.select("#canvas #node-tooltip").remove();
     drawGraph(data);

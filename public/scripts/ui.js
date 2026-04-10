@@ -151,16 +151,32 @@ const tabs = [
                 <h3 style="margin:0;">Events</h3>
                 <div style="display:flex;align-items:center;gap:8px;">
                     <label style="font-size:11px;color:#888;font-weight:normal;">TZ</label>
-                    <select id="tz-select" style="font-size:11px;padding:3px 6px;border:1.5px solid #555;border-radius:5px;background:#3a3a3a;color:#eee;outline:none;">
-                        <option value="Europe/Paris">CET (Paris)</option>
-                        <option value="UTC">UTC</option>
-                        <option value="America/New_York">EST (New York)</option>
-                        <option value="America/Los_Angeles">PST (Los Angeles)</option>
-                        <option value="Asia/Tokyo">JST (Tokyo)</option>
-                        <option value="Asia/Shanghai">CST (Shanghai)</option>
-                        <option value="Europe/London">GMT (London)</option>
-                        <option value="Europe/Berlin">CET (Berlin)</option>
-                        <option value="Asia/Dubai">GST (Dubai)</option>
+                    <select id="tz-select" style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-1);color:var(--text-0);outline:none;">
+                        <option value="UTC">UTC±0</option>
+                        <option value="Etc/GMT+12">UTC−12</option>
+                        <option value="Etc/GMT+11">UTC−11</option>
+                        <option value="Etc/GMT+10">UTC−10</option>
+                        <option value="Etc/GMT+9">UTC−9</option>
+                        <option value="Etc/GMT+8">UTC−8</option>
+                        <option value="Etc/GMT+7">UTC−7</option>
+                        <option value="Etc/GMT+6">UTC−6</option>
+                        <option value="Etc/GMT+5">UTC−5</option>
+                        <option value="Etc/GMT+4">UTC−4</option>
+                        <option value="Etc/GMT+3">UTC−3</option>
+                        <option value="Etc/GMT+2">UTC−2</option>
+                        <option value="Etc/GMT+1">UTC−1</option>
+                        <option value="Etc/GMT-1">UTC+1</option>
+                        <option value="Etc/GMT-2">UTC+2</option>
+                        <option value="Etc/GMT-3">UTC+3</option>
+                        <option value="Etc/GMT-4">UTC+4</option>
+                        <option value="Etc/GMT-5">UTC+5</option>
+                        <option value="Etc/GMT-6">UTC+6</option>
+                        <option value="Etc/GMT-7">UTC+7</option>
+                        <option value="Etc/GMT-8">UTC+8</option>
+                        <option value="Etc/GMT-9">UTC+9</option>
+                        <option value="Etc/GMT-10">UTC+10</option>
+                        <option value="Etc/GMT-11">UTC+11</option>
+                        <option value="Etc/GMT-12">UTC+12</option>
                     </select>
                 </div>
             </div>
@@ -366,14 +382,17 @@ window.nodeNotes = {};
         if (typeof window.updateActiveEvents === "function") window.updateActiveEvents(ms, fromPlayback || false);
     }
 
-    // Slider drag — snaps to nearest event time and shows cards
+    // Slider drag — snaps to nearest event time and shows cards (debounced 25ms)
+    let _sliderTimer = null;
     slider.addEventListener("input", () => {
         const times = getSortedTimes();
         if (!times.length) return;
-        const val = parseInt(slider.value);
+        const val = parseInt(slider.value, 10);
         const nearest = times.reduce((a, b) => Math.abs(b - val) < Math.abs(a - val) ? b : a);
         slider.value = nearest;
-        setTime(nearest, true);
+        if (typeof updateTimelineLabel === "function") updateTimelineLabel(nearest);
+        clearTimeout(_sliderTimer);
+        _sliderTimer = setTimeout(() => setTime(nearest, true), 25);
     });
 
     stepBack.addEventListener("click", () => {
@@ -523,7 +542,8 @@ function wireAddNodeForm() {
         const ipOptional = ["switch", "router", "unknown"].includes(type);
         if (!ipOptional && ips.length === 0) { errorEl.textContent = "At least one IP address is required."; return; }
 
-        const id      = `${system}-${hostname}`;
+        const _san    = s => String(s).trim().replace(/[^a-zA-Z0-9._-]/g, "_");
+        const id      = `${_san(system)}-${_san(hostname)}`;
         const graphId = window.currentGraphId;
         if (!graphId) { errorEl.textContent = "No active graph — please wait for the app to load."; return; }
         const newNode = { id, hostname, ips, type, system, graphId, ...(connections.length ? { connections } : {}) };
@@ -944,6 +964,7 @@ function renderNodeList() {
                 d3.select("#canvas #node-tooltip").remove();
                 drawGraph(data);
                 renderNodeList();
+                if (typeof window.reloadJsonEditor === "function") window.reloadJsonEditor();
             })
             .catch(() => { errorEl.textContent = "Server error."; });
         });
@@ -951,7 +972,7 @@ function renderNodeList() {
         // Delete
         item.querySelector(".delete-btn").addEventListener("click", () => {
             const errorEl = item.querySelector(".node-edit-error");
-            if (!confirm(`Delete node "${node.id}"?`)) return;
+            if (!confirm(`Delete "${node.hostname}" (${node.id}) and all its events? This cannot be undone.`)) return;
             fetch("/delete-node", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -960,6 +981,7 @@ function renderNodeList() {
             .then(r => r.json())
             .then(res => {
                 if (res.error) { errorEl.textContent = res.error; return; }
+                if (typeof window.reloadJsonEditor === "function") window.reloadJsonEditor();
                 const data = window.currentGraphData;
                 data.nodes = data.nodes.filter(n => n.id !== node.id);
                 data.links = data.links.filter(l => {
@@ -971,6 +993,7 @@ function renderNodeList() {
                 d3.select("#canvas #node-tooltip").remove();
                 drawGraph(data);
                 renderNodeList();
+                if (typeof window.reloadJsonEditor === "function") window.reloadJsonEditor();
             })
             .catch(() => { errorEl.textContent = "Server error."; });
         });
@@ -986,8 +1009,8 @@ function wireEventsTab() {
     const tzSel = document.getElementById("tz-select");
     if (tzSel && !tzSel._wired) {
         tzSel._wired = true;
-        window.selectedTimezone = "Europe/Paris";
-        tzSel.value = "Europe/Paris";
+        window.selectedTimezone = "UTC";
+        tzSel.value = "UTC";
         tzSel.addEventListener("change", function() {
             window.selectedTimezone = this.value;
             if (typeof updateEventFeed === "function") updateEventFeed();

@@ -98,7 +98,9 @@ async function resolveRef(ref, graphId) {
 function parseGraphId(url) {
     const u = new URL(url, "http://localhost");
     const g = u.searchParams.get("graphId");
-    return g ? parseInt(g) : null;
+    if (!g) return null;
+    const n = parseInt(g, 10);
+    return isNaN(n) ? null : n;
 }
 
 // ── Request handler ───────────────────────────────────────────────────────────
@@ -126,14 +128,17 @@ http.createServer(async (req, res) => {
         if (req.method === "POST" && pathname === "/rename-graph") {
             const { id, name } = await readBody(req);
             if (!name || !name.trim()) return json(res, 400, { error: "Name required." });
-            const graph = await prisma.graph.update({ where: { id: parseInt(id) }, data: { name: name.trim() } });
+            const gid = parseInt(id, 10);
+            if (isNaN(gid)) return json(res, 400, { error: "Invalid graph id." });
+            const graph = await prisma.graph.update({ where: { id: gid }, data: { name: name.trim() } });
             return json(res, 200, { ok: true, graph });
         }
 
         // ── POST /delete-graph ──────────────────────────────────────────────
         if (req.method === "POST" && pathname === "/delete-graph") {
             const { id } = await readBody(req);
-            const gid = parseInt(id);
+            const gid = parseInt(id, 10);
+            if (isNaN(gid)) return json(res, 400, { error: "Invalid graph id." });
             const count = await prisma.graph.count();
             if (count <= 1) return json(res, 400, { error: "Cannot delete the last graph." });
             // Cascade deletes nodes → ips, links, notes, events
@@ -247,31 +252,34 @@ http.createServer(async (req, res) => {
             const body = await readBody(req);
             const { graph, graphId: gid } = body;
             if (!graph || !graph.nodes || !graph.links) return json(res, 400, { error: "Missing nodes or links" });
-            const graphId = parseInt(gid) || await ensureDefaultGraph();
+            const graphId = parseInt(gid, 10) || await ensureDefaultGraph();
 
             await prisma.$transaction(async tx => {
                 await tx.event.deleteMany({ where: { node: { graphId } } });
                 await tx.node.deleteMany({ where: { graphId } });
+                // Batch-create nodes then IPs, much faster than sequential creates
+                const nodeRows = graph.nodes.map(n => ({
+                    id: n.id, hostname: n.hostname || "", system: n.system || "",
+                    type: VALID_TYPES.includes(n.type) ? n.type : "unknown", graphId,
+                }));
+                if (nodeRows.length) await tx.node.createMany({ data: nodeRows, skipDuplicates: true });
+
+                const ipRows = [];
                 for (const n of graph.nodes) {
                     const ips = Array.isArray(n.ips) ? n.ips
                         : n.ip ? [{ address: n.ip.replace(/\/\d+$/, ""), subnet: n.subnet || "" }] : [];
-                    await tx.node.create({
-                        data: {
-                            id: n.id, hostname: n.hostname, system: n.system,
-                            type: n.type || "unknown", graphId,
-                            ips: { create: ips.map(i => ({ address: i.address, subnet: i.subnet || "" })) },
-                        }
-                    });
+                    for (const ip of ips) {
+                        ipRows.push({ nodeId: n.id, address: ip.address, subnet: ip.subnet || "" });
+                    }
                 }
-                for (const l of graph.links) {
-                    const source = typeof l.source === "object" ? l.source.id : l.source;
-                    const target = typeof l.target === "object" ? l.target.id : l.target;
-                    await tx.link.upsert({
-                        where:  { source_target: { source, target } },
-                        update: { label: l.label || "" },
-                        create: { source, target, label: l.label || "" },
-                    });
-                }
+                if (ipRows.length) await tx.nodeIp.createMany({ data: ipRows, skipDuplicates: true });
+
+                const linkRows = graph.links.map(l => ({
+                    source: typeof l.source === "object" ? l.source.id : l.source,
+                    target: typeof l.target === "object" ? l.target.id : l.target,
+                    label:  l.label || "",
+                }));
+                if (linkRows.length) await tx.link.createMany({ data: linkRows, skipDuplicates: true });
             });
             return json(res, 200, { ok: true });
         }
@@ -288,6 +296,8 @@ http.createServer(async (req, res) => {
         // ── POST /save-note ─────────────────────────────────────────────────
         if (req.method === "POST" && pathname === "/save-note") {
             const { id, notes } = await readBody(req);
+            const noteNode = await prisma.node.findUnique({ where: { id } });
+            if (!noteNode) return json(res, 400, { error: `Node "${id}" not found.` });
             if (notes && notes.trim()) {
                 await prisma.note.upsert({
                     where:  { nodeId: id },
@@ -305,7 +315,7 @@ http.createServer(async (req, res) => {
             const body = await readBody(req);
             const { graph, graphId: gid } = body;
             if (!graph || !graph.nodes || !graph.links) return json(res, 400, { error: "Missing nodes or links" });
-            const graphId = parseInt(gid) || await ensureDefaultGraph();
+            const graphId = parseInt(gid, 10) || await ensureDefaultGraph();
 
             let imported = 0;
             await prisma.$transaction(async tx => {
@@ -373,8 +383,10 @@ http.createServer(async (req, res) => {
         // ── POST /edit-event ────────────────────────────────────────────────
         if (req.method === "POST" && pathname === "/edit-event") {
             const body = await readBody(req);
-            const eventId = parseInt(body.id);
+            const eventId = parseInt(body.id, 10);
             if (isNaN(eventId)) return json(res, 400, { error: "Invalid event id" });
+            if (body.actor    && !VALID_ACTORS.includes(body.actor))       return json(res, 400, { error: "Invalid actor." });
+            if (body.severity && !VALID_SEVERITIES.includes(body.severity)) return json(res, 400, { error: "Invalid severity." });
             const event = await prisma.event.update({
                 where: { id: eventId },
                 data: {
@@ -396,6 +408,20 @@ http.createServer(async (req, res) => {
             return json(res, 200, { ok: true });
         }
 
+        // ── GET /health ─────────────────────────────────────────────────────
+        if (req.method === "GET" && pathname === "/health") {
+            return json(res, 200, { ok: true, uptime: process.uptime() });
+        }
+
+        // ── 405 for known API routes hit with wrong method ─────────────────
+        const apiRoutes = ["/graphs","/graph","/create-graph","/rename-graph",
+            "/delete-graph","/add-node","/edit-node","/delete-node","/save-graph",
+            "/notes","/save-note","/import","/events","/add-event","/edit-event",
+            "/delete-event","/health"];
+        if (apiRoutes.includes(pathname)) {
+            return json(res, 405, { error: "Method not allowed" });
+        }
+
         // ── Static file serving ─────────────────────────────────────────────
         const publicRoot = path.resolve("./public");
         let rawPath = urlObj.pathname;
@@ -407,12 +433,18 @@ http.createServer(async (req, res) => {
         }
         const extname     = String(path.extname(filePath)).toLowerCase();
         const contentType = mimeTypes[extname] || "application/octet-stream";
+        // Assets (JS/CSS/images) are versioned by filename — safe to cache.
+        // HTML is never cached so the app shell always stays fresh.
+        const cacheControl = (extname === ".html" || extname === "")
+            ? "no-store"
+            : "public, max-age=86400, stale-while-revalidate=3600";
         fs.readFile(filePath, (err, content) => {
             if (err) {
                 res.writeHead(404, { "Content-Type": "text/plain", ...SECURITY_HEADERS });
                 res.end("404 - File not found");
             } else {
-                res.writeHead(200, { "Content-Type": contentType, ...SECURITY_HEADERS });
+                res.writeHead(200, { "Content-Type": contentType,
+                    ...SECURITY_HEADERS, "Cache-Control": cacheControl });
                 res.end(content, "utf-8");
             }
         });
